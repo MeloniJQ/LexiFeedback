@@ -1,16 +1,15 @@
 import type { Metadata, Viewport } from 'next'
-import { Geist, Geist_Mono } from 'next/font/google'
+import { Geist } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
 import { ThemeProvider } from '@/components/theme-provider'
 import './globals.css'
 
-const geist = Geist({ subsets: ["latin"] });
-const geistMono = Geist_Mono({ subsets: ["latin"] });
+const geist = Geist({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
   title: 'Lexical - English Learning Platform',
   description: 'Master English through AI-powered feedback and personalized practice',
-  generator: 'v0.app',
+  
   icons: {
     icon: [
       {
@@ -33,7 +32,7 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   themeColor: [
     { media: '(prefers-color-scheme: light)', color: '#FFFFFF' },
-    { media: '(prefers-color-scheme: dark)', color: '#0F172A' },
+    { media: '(prefers-color-scheme: dark)', color: 'black' },
   ],
   userScalable: true,
 }
@@ -44,8 +43,8 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" className="bg-white dark:bg-[#0F172A]">
-      <body className={`${geist.className} font-sans antialiased bg-white dark:bg-[#0F172A] text-[#1F2937] dark:text-white`}>
+    <html lang="en" className="bg-white dark:bg-black">
+      <body className={`${geist.className} font-sans antialiased bg-white dark:bg-black text-[#1F2937] dark:text-white`}>
         <ThemeProvider>
           {children}
         </ThemeProvider>
@@ -54,3 +53,17 @@ export default function RootLayout({
     </html>
   )
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+

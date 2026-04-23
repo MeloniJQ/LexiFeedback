@@ -1,7 +1,5 @@
 'use client'
 
-import { Header } from '@/components/layout/header'
-import { Sidebar } from '@/components/layout/sidebar'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line } from 'recharts'
 
 const progressData = [
@@ -56,13 +54,7 @@ const recentSessions = [
 
 export default function FeedbackDashboard() {
   return (
-    <div className="flex h-screen bg-white dark:bg-[#0F172A]">
-      <Sidebar />
-      <div className="flex-1 flex flex-col">
-        <Header />
-        
-        <main className="flex-1 overflow-auto p-6 lg:p-8">
-          <div className="max-w-7xl mx-auto">
+    <div className="max-w-7xl mx-auto">
             {/* Header */}
             <div className="mb-8">
               <h1 className="text-3xl font-bold text-[#1F2937] dark:text-white mb-2">
@@ -97,7 +89,7 @@ export default function FeedbackDashboard() {
                 <p className="text-[#6B7280] dark:text-gray-400 text-sm font-medium">
                   Average Score
                 </p>
-                <p className="text-3xl font-bold text-[#2C5AA0] dark:text-[#63B3ED] mt-2">
+                <p className="text-3xl font-bold text-[#2C5AA0] dark:text-white mt-2">
                   78.8%
                 </p>
               </div>
@@ -205,7 +197,7 @@ export default function FeedbackDashboard() {
                           {session.duration} min
                         </td>
                         <td className="py-3 px-4">
-                          <span className="inline-block px-3 py-1 rounded-full text-white text-sm font-medium bg-[#2C5AA0]">
+                          <span className="inline-block px-3 py-1 rounded-full text-white text-sm font-medium bg-black">
                             {session.score}%
                           </span>
                         </td>
@@ -219,8 +211,5 @@ export default function FeedbackDashboard() {
               </div>
             </div>
           </div>
-        </main>
-      </div>
-    </div>
   )
 }

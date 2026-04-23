@@ -1,8 +1,6 @@
 'use client'
 
 import { useState } from 'react'
-import { Header } from '@/components/layout/header'
-import { Sidebar } from '@/components/layout/sidebar'
 import { Button } from '@/components/ui/button'
 import { Save } from 'lucide-react'
 
@@ -30,13 +28,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="flex h-screen bg-white dark:bg-[#0F172A]">
-      <Sidebar />
-      <div className="flex-1 flex flex-col">
-        <Header />
-        
-        <main className="flex-1 overflow-auto p-6 lg:p-8">
-          <div className="max-w-2xl mx-auto">
+    <div className="max-w-2xl mx-auto">
             {/* Header */}
             <div className="mb-8">
               <h1 className="text-3xl font-bold text-[#1F2937] dark:text-white mb-2">
@@ -193,9 +185,6 @@ export default function SettingsPage() {
                 </div>
               )}
             </div>
-          </div>
-        </main>
-      </div>
     </div>
   )
 }
