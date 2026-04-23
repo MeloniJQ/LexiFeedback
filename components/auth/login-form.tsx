@@ -2,11 +2,9 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import { Mail, Lock } from 'lucide-react'
 
 export function LoginForm() {
-  const router = useRouter()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -14,30 +12,8 @@ export function LoginForm() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setError(null)
-    setIsLoading(true)
-
-    try {
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      })
-
-      const data = await response.json()
-
-      if (!response.ok) {
-        setError(data.message || 'Login failed')
-        return
-      }
-
-      router.push('/dashboard')
-    } catch (err) {
-      setError('An error occurred. Please try again.')
-      console.error(err)
-    } finally {
-      setIsLoading(false)
-    }
+    setError('Authentication not implemented - backend required')
+    setIsLoading(false)
   }
 
   return (

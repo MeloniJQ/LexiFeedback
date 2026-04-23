@@ -2,11 +2,9 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import { Mail, Lock, User } from 'lucide-react'
 
 export function SignupForm() {
-  const router = useRouter()
   const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -26,24 +24,11 @@ export function SignupForm() {
     setIsLoading(true)
 
     try {
-      const response = await fetch('/api/auth/signup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fullName, email, password }),
-      })
-
-      const data = await response.json()
-
-      if (!response.ok) {
-        setError(data.message || 'Signup failed')
-        return
-      }
-
-      router.push('/dashboard')
+      setError('Authentication not implemented - backend required')
+      setIsLoading(false)
     } catch (err) {
       setError('An error occurred. Please try again.')
       console.error(err)
-    } finally {
       setIsLoading(false)
     }
   }

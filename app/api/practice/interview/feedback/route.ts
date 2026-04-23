@@ -44,6 +44,9 @@ function generateMockFeedback(transcript: string): string {
   } else {
     feedback += '- Excellent use of filler words - none detected!\n'
   }
+  if (hasPauses) {
+    feedback += '- Consider reducing pauses for smoother delivery\n'
+  }
   feedback += '\n'
 
   // Content Analysis
