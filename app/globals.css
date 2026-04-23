@@ -1,0 +1,109 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+/* Light Mode - Lexical Design System */
+:root {
+  /* Primary Brand Color */
+  --primary: #2C5AA0;
+  --primary-dark: #1E3A5F;
+  
+  /* Semantic Colors */
+  --success: #10B981;
+  --warning: #F59E0B;
+  --danger: #EF4444;
+  
+  /* Background & Surfaces */
+  --bg-default: #FFFFFF;
+  --bg-surface: #F9FAFB;
+  --bg-surface-secondary: #F3F4F6;
+  
+  /* Text */
+  --text-primary: #1F2937;
+  --text-secondary: #6B7280;
+  --text-tertiary: #9CA3AF;
+  
+  /* Borders */
+  --border-color: #E5E7EB;
+  --border-color-light: #F3F4F6;
+  
+  /* Shadows */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+  
+  /* Radius */
+  --radius: 0.5rem;
+}
+
+/* Dark Mode - Lexical Design System */
+.dark {
+  /* Primary Brand Color */
+  --primary: #2C5AA0;
+  --primary-dark: #1E3A5F;
+  
+  /* Semantic Colors */
+  --success: #10B981;
+  --warning: #F59E0B;
+  --danger: #EF4444;
+  
+  /* Background & Surfaces */
+  --bg-default: #0F172A;
+  --bg-surface: #1F2937;
+  --bg-surface-secondary: #374151;
+  
+  /* Text */
+  --text-primary: #F9FAFB;
+  --text-secondary: #D1D5DB;
+  --text-tertiary: #9CA3AF;
+  
+  /* Borders */
+  --border-color: #4B5563;
+  --border-color-light: #374151;
+  
+  /* Shadows */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.25);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.4);
+}
+
+@layer base {
+  html {
+    @apply bg-white dark:bg-[#0F172A];
+  }
+  
+  body {
+    @apply bg-white text-[#1F2937] dark:bg-[#0F172A] dark:text-white;
+    @apply transition-colors duration-200;
+  }
+  
+  * {
+    @apply transition-colors duration-200;
+  }
+  
+  /* Typography base styles */
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-sans font-semibold tracking-tight;
+  }
+  
+  h1 {
+    @apply text-4xl;
+  }
+  
+  h2 {
+    @apply text-3xl;
+  }
+  
+  h3 {
+    @apply text-2xl;
+  }
+  
+  h4 {
+    @apply text-xl;
+  }
+  
+  p {
+    @apply font-sans font-normal leading-relaxed;
+  }
+}
