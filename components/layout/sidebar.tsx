@@ -15,7 +15,7 @@ export function Sidebar() {
     },
     {
       label: 'Practice',
-      href: '/dashboard/practice',
+      href: '/dashboard',
       icon: BookOpen,
     },
     {

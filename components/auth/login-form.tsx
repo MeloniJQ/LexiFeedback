@@ -2,18 +2,50 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { Mail, Lock } from 'lucide-react'
+import { Mail, Lock, User, Calendar, GraduationCap } from 'lucide-react'
 
 export function LoginForm() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [fullName, setFullName] = useState('')
+  const [age, setAge] = useState('')
+  const [education, setEducation] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setError('Authentication not implemented - backend required')
-    setIsLoading(false)
+    setError(null)
+    setIsLoading(true)
+
+    try {
+      // Validate required fields
+      if (!fullName.trim()) {
+        setError('Full name is required')
+        setIsLoading(false)
+        return
+      }
+
+      if (!age || parseInt(age) < 13) {
+        setError('Please enter a valid age (13+)')
+        setIsLoading(false)
+        return
+      }
+
+      if (!education.trim()) {
+        setError('Education/Job description is required')
+        setIsLoading(false)
+        return
+      }
+
+      // TODO: Send to backend API with all fields: email, password, fullName, age, education
+      setError('Authentication not implemented - backend required')
+      setIsLoading(false)
+    } catch (err) {
+      setError('An error occurred. Please try again.')
+      console.error(err)
+      setIsLoading(false)
+    }
   }
 
   return (
@@ -45,6 +77,62 @@ export function LoginForm() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@example.com"
+                required
+                className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-[#374151] text-[#1F2937] dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#2C5AA0]"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label htmlFor="fullName" className="block text-sm font-medium text-[#1F2937] dark:text-white mb-2">
+              Full Name
+            </label>
+            <div className="relative">
+              <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[#6B7280] dark:text-gray-500" />
+              <input
+                id="fullName"
+                type="text"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                placeholder="John Doe"
+                required
+                className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-[#374151] text-[#1F2937] dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#2C5AA0]"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label htmlFor="age" className="block text-sm font-medium text-[#1F2937] dark:text-white mb-2">
+              Age
+            </label>
+            <div className="relative">
+              <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[#6B7280] dark:text-gray-500" />
+              <input
+                id="age"
+                type="number"
+                value={age}
+                onChange={(e) => setAge(e.target.value)}
+                placeholder="25"
+                min="13"
+                max="100"
+                required
+                className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-[#374151] text-[#1F2937] dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#2C5AA0]"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label htmlFor="education" className="block text-sm font-medium text-[#1F2937] dark:text-white mb-2">
+              Education / Job Description
+            </label>
+            <div className="relative">
+              <GraduationCap className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[#6B7280] dark:text-gray-500" />
+              <input
+                id="education"
+                type="text"
+                value={education}
+                onChange={(e) => setEducation(e.target.value)}
+                placeholder="Student, Software Engineer, etc."
                 required
                 className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-[#374151] text-[#1F2937] dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#2C5AA0]"
               />
