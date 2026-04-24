@@ -6,8 +6,8 @@
 /* Light Mode - Lexical Design System */
 :root {
   /* Primary Brand Color */
-  --primary: #2C5AA0;
-  --primary-dark: black;
+  --primary: #000000;
+  --primary-dark: #000000;
   
   /* Semantic Colors */
   --success: #10B981;
@@ -40,8 +40,8 @@
 /* Dark Mode - Lexical Design System */
 .dark {
   /* Primary Brand Color */
-  --primary: #2C5AA0;
-  --primary-dark: black;
+  --primary: #000000;
+  --primary-dark: #000000;
   
   /* Semantic Colors */
   --success: #10B981;

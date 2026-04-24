@@ -3,7 +3,8 @@
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Mic, Square, Send, Volume2, User } from 'lucide-react'
+import { Mic, Square, Send, Volume2, User, Home } from 'lucide-react'
+import Link from 'next/link'
 
 export default function ConversationPracticePage() {
   const [isRecording, setIsRecording] = useState(false)
@@ -74,24 +75,34 @@ export default function ConversationPracticePage() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-[#1F2937] dark:text-white mb-2">
-          Casual Conversation Practice
-        </h1>
-        <p className="text-[#6B7280] dark:text-gray-400">
-          Practice natural English in informal conversations with AI
-        </p>
+    <div className="min-h-screen bg-white dark:bg-black">
+      <div className="absolute top-6 right-6">
+        <Link href="/dashboard">
+          <Button variant="outline" className="flex items-center gap-2">
+            <Home className="w-4 h-4" />
+            Home
+          </Button>
+        </Link>
       </div>
 
-      {/* Topic Selection */}
-      <div className="bg-white dark:bg-[#1F2937] rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+      <div className="max-w-4xl mx-auto space-y-6 p-6">
+        <div>
+          <h1 className="text-4xl font-bold text-[#1F2937] dark:text-white mb-2">
+            Casual Conversation Practice
+          </h1>
+          <p className="text-lg text-[#6B7280] dark:text-gray-400">
+            Practice natural English in informal conversations with AI
+          </p>
+        </div>
+
+        {/* Topic Selection */}
+        <div className="bg-white dark:bg-[#111111] rounded-lg border border-gray-200 dark:border-gray-800 p-6">
         <h2 className="text-xl font-semibold text-[#1F2937] dark:text-white mb-4">
           Choose a Topic
         </h2>
         <div className="flex gap-4 items-center">
           <Select value={selectedTopic} onValueChange={setSelectedTopic}>
-            <SelectTrigger className="w-64">
+            <SelectTrigger className="w-64 bg-gray-100 dark:bg-[#1F2937]">
               <SelectValue placeholder="Select a conversation topic" />
             </SelectTrigger>
             <SelectContent>
@@ -113,9 +124,9 @@ export default function ConversationPracticePage() {
         </div>
       </div>
 
-      {/* Conversation Display */}
-      {conversation.length > 0 && (
-        <div className="bg-white dark:bg-[#1F2937] rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+        {/* Conversation Display */}
+        {conversation.length > 0 && (
+          <div className="bg-white dark:bg-[#111111] rounded-lg border border-gray-200 dark:border-gray-800 p-6">
           <h2 className="text-xl font-semibold text-[#1F2937] dark:text-white mb-4">
             Conversation
           </h2>
@@ -123,17 +134,17 @@ export default function ConversationPracticePage() {
             {conversation.map((message, index) => (
               <div key={index} className={`flex gap-3 ${message.speaker === 'user' ? 'justify-end' : 'justify-start'}`}>
                 <div className={`flex gap-3 max-w-[80%] ${message.speaker === 'user' ? 'flex-row-reverse' : ''}`}>
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
                     message.speaker === 'system' 
-                      ? 'bg-black dark:bg-black text-white' 
+                      ? 'bg-[#1F2937] dark:bg-white text-white dark:text-black' 
                       : 'bg-[#10B981] text-white'
                   }`}>
                     {message.speaker === 'system' ? <Volume2 className="w-4 h-4" /> : <User className="w-4 h-4" />}
                   </div>
                   <div className={`rounded-lg p-3 ${
                     message.speaker === 'system'
-                      ? 'bg-black dark:bg-black text-white'
-                      : 'bg-black text-white'
+                      ? 'bg-[#F3F4F6] dark:bg-[#374151] text-[#1F2937] dark:text-white'
+                      : 'bg-[#1F2937] dark:bg-[#10B981] text-white'
                   }`}>
                     <p className="text-sm">{message.text}</p>
                   </div>
@@ -144,9 +155,9 @@ export default function ConversationPracticePage() {
         </div>
       )}
 
-      {/* Recording Section */}
-      {!isSystemTurn && conversation.length > 0 && (
-        <div className="bg-white dark:bg-[#1F2937] rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+        {/* Recording Section */}
+        {!isSystemTurn && conversation.length > 0 && (
+          <div className="bg-white dark:bg-[#111111] rounded-lg border border-gray-200 dark:border-gray-800 p-6">
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-xl font-semibold text-[#1F2937] dark:text-white">
@@ -183,9 +194,9 @@ export default function ConversationPracticePage() {
         </div>
       )}
 
-      {/* Feedback */}
-      {feedback && (
-        <div className="bg-white dark:bg-[#1F2937] rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+        {/* Feedback */}
+        {feedback && (
+          <div className="bg-white dark:bg-[#111111] rounded-lg border border-gray-200 dark:border-gray-800 p-6">
           <h2 className="text-xl font-semibold text-[#1F2937] dark:text-white mb-4">
             AI Feedback
           </h2>
@@ -193,7 +204,8 @@ export default function ConversationPracticePage() {
             {feedback}
           </p>
         </div>
-      )}
+        )}
+      </div>
     </div>
   )
 }

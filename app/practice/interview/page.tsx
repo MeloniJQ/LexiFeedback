@@ -5,7 +5,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
-import { Mic, Square, Send, Upload, FileText } from 'lucide-react'
+import { Mic, Square, Send, Upload, FileText, Home } from 'lucide-react'
+import Link from 'next/link'
 
 export default function InterviewPracticePage() {
   const [isRecording, setIsRecording] = useState(false)
@@ -64,19 +65,29 @@ export default function InterviewPracticePage() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-[#1F2937] dark:text-white mb-2">
-          Interview Practice
-        </h1>
-        <p className="text-[#6B7280] dark:text-gray-400">
-          Practice your interview skills with AI feedback
-        </p>
+    <div className="min-h-screen bg-white dark:bg-black">
+      <div className="absolute top-6 right-6">
+        <Link href="/dashboard">
+          <Button variant="outline" className="flex items-center gap-2">
+            <Home className="w-4 h-4" />
+            Home
+          </Button>
+        </Link>
       </div>
 
-      {/* Interview Setup */}
-      {!setupComplete && (
-        <div className="bg-white dark:bg-[#1F2937] rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+      <div className="max-w-4xl mx-auto space-y-6 p-6">
+        <div>
+          <h1 className="text-4xl font-bold text-[#1F2937] dark:text-white mb-2">
+            Interview Practice
+          </h1>
+          <p className="text-lg text-[#6B7280] dark:text-gray-400">
+            Practice your interview skills with AI feedback
+          </p>
+        </div>
+
+        {/* Interview Setup */}
+        {!setupComplete && (
+          <div className="bg-white dark:bg-[#111111] rounded-lg border border-gray-200 dark:border-gray-800 p-6">
           <h2 className="text-xl font-semibold text-[#1F2937] dark:text-white mb-6">
             Interview Setup
           </h2>
@@ -175,9 +186,9 @@ export default function InterviewPracticePage() {
         </div>
       )}
 
-      {/* Interview Practice */}
-      {setupComplete && (
-        <div className="bg-white dark:bg-[#1F2937] rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+        {/* Interview Practice */}
+        {setupComplete && (
+          <div className="bg-white dark:bg-[#111111] rounded-lg border border-gray-200 dark:border-gray-800 p-6">
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
@@ -219,9 +230,9 @@ export default function InterviewPracticePage() {
         </div>
       )}
 
-      {/* Feedback */}
-      {feedback && (
-        <div className="bg-white dark:bg-[#1F2937] rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+        {/* Feedback */}
+        {feedback && (
+          <div className="bg-white dark:bg-[#111111] rounded-lg border border-gray-200 dark:border-gray-800 p-6">
           <h2 className="text-xl font-semibold text-[#1F2937] dark:text-white mb-4">
             AI Feedback
           </h2>
@@ -229,7 +240,8 @@ export default function InterviewPracticePage() {
             {feedback}
           </p>
         </div>
-      )}
+        )}
+      </div>
     </div>
   )
 }
