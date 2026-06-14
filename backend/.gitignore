@@ -1,3 +1,19 @@
-.env
+# Python
 venv/
 __pycache__/
+*.pyc
+
+# Environment variables
+.env
+
+# VS Code / Visual Studio
+.vs/
+
+# Database
+*.db
+
+# Uploads
+backend/uploads/
+
+# Node
+node_modules/
