@@ -133,6 +133,7 @@ def analyze_voice_answer(
     Returns JSON dict so the frontend can render a rich breakdown UI.
     """
     if not transcript.strip():
+        print("[analyze_voice_answer] Empty transcript provided.")
         return _empty_analysis()
 
     # Compute delivery metrics locally (don't waste tokens on counting)
@@ -211,6 +212,9 @@ Return ONLY this JSON (no markdown fences, no extra keys):
         raw  = response.choices[0].message.content.strip()
         raw  = re.sub(r"```json|```", "", raw).strip()
         data = json.loads(raw)
+        
+        print(f"TRANSCRIPT: {transcript[:100]}...")
+        print(f"ANALYSIS: {json.dumps(data, indent=2)}")
 
         # Attach pre-computed delivery metrics so frontend has them
         data["metrics"] = {
@@ -291,6 +295,8 @@ Task:
    - Sounds like a real interviewer, not a chatbot
 
 Return ONLY this JSON:
+
+print(f"FOLLOWUP INPUT: {transcript[:100]}...")
 {{
   "followup": "...",
   "probe_target": "one phrase describing what this tests (e.g., 'ownership depth', 'quantifiable impact')",
@@ -370,6 +376,7 @@ def generate_voice_followup(
         )
         data = parse_json_object(response.choices[0].message.content.strip())
         if "followup" not in data:
+            print(f"FOLLOWUP OUTPUT: {data.get('followup')}")
             raise ValueError("Missing followup key")
         return {
             "followup": data["followup"],
@@ -420,14 +427,22 @@ def _empty_analysis() -> dict:
 
 def _fallback_analysis(transcript, question, filler_words, avg_wpm, pace_verdict, word_count) -> dict:
     score = 6
-    if word_count > 80:  score += 1
+    # Detect poor content / "bullshit" answers
+    if word_count < 15:
+        score = 2
+    elif word_count < 40:
+        score = 4
+
+    if word_count > 80 and score >= 4:  score += 1
     if filler_words["count"] < 3: score += 1
-    if avg_wpm in range(120, 161): score += 1
+    if avg_wpm in range(120, 161) and word_count >= 15: score += 1
+
+    print(f"FALLBACK SCORES: content={score}, delivery={10 - filler_words['count']}")
 
     return {
         "scores": {
             "content":    min(score, 10),
-            "delivery":   max(10 - filler_words["count"], 4),
+            "delivery":   max(10 - filler_words["count"], 2) if word_count < 15 else max(10 - filler_words["count"], 4),
             "vocabulary": 7,
             "overall":    min(score, 10),
         },

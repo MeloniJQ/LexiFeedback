@@ -54,6 +54,7 @@ def analyze_answer_contextually(
     Returns sophisticated breakdown including adaptive scoring.
     """
     if not transcript.strip():
+        print("[analyze_answer_contextually] Empty transcript received.")
         return _empty_analysis()
 
     # Build context about prior answers for comparison
@@ -156,8 +157,11 @@ Return JSON only (no markdown fences):
     try:
         raw = _chat(system, user, temperature=0.5)
         raw = re.sub(r"```json|```", "", raw).strip()
+        print(f"TRANSCRIPT: {transcript[:100]}...")
         result = json.loads(raw)
         
+        print(f"ANALYSIS (Agentic): {json.dumps(result, indent=2)}")
+
         # Ensure all required fields exist
         return _normalize_analysis(result)
     except Exception as e:
@@ -273,15 +277,19 @@ def _fallback_analysis(transcript: str, question_type: str) -> dict:
     has_metrics = bool(re.search(r'\b\d+%|\d+x|\$\d+|improved|increased|reduced\b', transcript.lower()))
     has_star = bool(re.search(r'situation|task|action|result|challenge|problem', transcript, re.I))
 
+    # Detection for "bullshit" or very poor answers
+    is_very_short = word_count < 15
+
     score_adjustments = {
-        "content": 5,
-        "delivery": 5,
-        "vocabulary": 5,
+        "content": 2 if is_very_short else 5,
+        "delivery": 3 if is_very_short else 5,
+        "vocabulary": 3 if is_very_short else 5,
     }
 
-    if word_count < 30:
-        score_adjustments["content"] -= 2
-    elif word_count > 180:
+    if not is_very_short:
+        if word_count < 40:
+            score_adjustments["content"] -= 1
+    if word_count > 180:
         score_adjustments["content"] += 1
 
     if has_metrics:
@@ -293,6 +301,8 @@ def _fallback_analysis(transcript: str, question_type: str) -> dict:
         score_adjustments["content"] += 1
 
     score_adjustments["overall"] = sum(score_adjustments.values()) // 3
+
+    print(f"FALLBACK SCORES (Agentic): {score_adjustments}")
 
     return {
         "scores": {
