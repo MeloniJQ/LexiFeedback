@@ -9,6 +9,7 @@ from models import db
 from routes.auth import auth_bp
 from routes.interview import interview_bp
 from routes.voice import voice_bp          # ← NEW Step 2
+from routes.presentation_upload import presentation_upload_bp
 
 import sys
 import os
@@ -41,7 +42,8 @@ db.init_app(app)
 # Register blueprints
 app.register_blueprint(auth_bp,      url_prefix="/api/auth")
 app.register_blueprint(interview_bp, url_prefix="/api/interview")
-app.register_blueprint(voice_bp,     url_prefix="/api/voice")   # ← NEW
+app.register_blueprint(voice_bp,     url_prefix="/api/voice")  
+app.register_blueprint(presentation_upload_bp)   # ← NEW
 
 @app.route("/api/health", methods=["GET"])
 def health():
