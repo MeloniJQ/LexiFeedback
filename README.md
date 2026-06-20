@@ -41,13 +41,13 @@ LexiFeed is a full-stack web application that helps users practice English inter
 ```
 LexiFeed/
 +-- backend/
-¦   +-- app.py
-¦   +-- config.py
-¦   +-- requirements.txt
-¦   +-- models/
-¦   +-- routes/
-¦   +-- services/
-¦   +-- utils/
+ï¿½   +-- app.py
+ï¿½   +-- config.py
+ï¿½   +-- requirements.txt
+ï¿½   +-- models/
+ï¿½   +-- routes/
+ï¿½   +-- services/
+ï¿½   +-- utils/
 +-- frontend/
     +-- app/
     +-- components/
@@ -132,7 +132,7 @@ LexiFeed/
 
 4. Run the frontend:
    ```bash
-   npm run dev
+   :
    ```
 
 5. Open the app at:
@@ -168,7 +168,7 @@ The frontend stores the returned JWT token and sends it in the `Authorization: B
 * `POST /api/interview/feedback`
   * Saves interview transcript and returns AI feedback.
 * `GET /api/interview/sessions`
-  * Retrieves a user’s saved session history.
+  * Retrieves a userï¿½s saved session history.
 * `GET /api/interview/stats`
   * Returns aggregated progress metrics and streak data.
 
