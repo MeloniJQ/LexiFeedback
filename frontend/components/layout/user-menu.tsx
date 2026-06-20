@@ -4,18 +4,15 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { User, LogOut, Settings } from 'lucide-react'
+import { clearAuth } from '@/lib/auth'
 
 export function UserMenu() {
   const router = useRouter()
   const [isOpen, setIsOpen] = useState(false)
 
-  const handleLogout = async () => {
-    try {
-      await fetch('/api/auth/logout', { method: 'POST' })
-      router.push('/login')
-    } catch (error) {
-      console.error('Logout error:', error)
-    }
+  const handleLogout = () => {
+    clearAuth()
+    router.push('/login')
   }
 
   return (

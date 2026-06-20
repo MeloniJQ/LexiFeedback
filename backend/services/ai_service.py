@@ -1,15 +1,10 @@
 """
-LexiFeed AI Service — Step 1: Resume-aware question generation + follow-up engine.
+LexiFeed AI Service — Resume-aware question generation, follow-up engine, and feedback.
 
-Architecture:
-  - generate_questions_from_resume()  →  parses resume text, generates 5 deep questions
+  - generate_questions_from_resume()  →  parses resume text, generates deep questions
   - generate_followup_question()      →  given Q+A pair, asks 1 smart follow-up
   - generate_feedback()               →  end-of-session full analysis
   - extract_resume_text()             →  PDF / DOCX / plain-text extractor
-"""
-
-"""
-LexiFeed AI Service — Step 1: Resume-aware question generation + follow-up engine.
 """
 
 import os
@@ -413,7 +408,6 @@ def _fallback_pronunciation_analysis(transcript: str, original_text: str) -> dic
     trans_set = set(trans_words)
 
     # Simple matching logic
-    matches = orig_set.intersection(trans_set)
     mispronounced = list(orig_set - trans_set)
     added = list(trans_set - orig_set)
 
@@ -438,7 +432,7 @@ def _fallback_pronunciation_analysis(transcript: str, original_text: str) -> dic
 
 **Words to Practice:**
 {", ".join(mispronounced) if mispronounced else "None! Excellent job."}
-"""
+""" 
 
     return {
         "accuracy_score": accuracy,
@@ -448,4 +442,4 @@ def _fallback_pronunciation_analysis(transcript: str, original_text: str) -> dic
         "feedback_markdown": feedback
     }
 
-"""
+

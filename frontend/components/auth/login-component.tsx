@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Mail, Lock } from 'lucide-react'
+import { Mail, Lock, AlertCircle } from 'lucide-react'
 import { signInWithEmail } from '@/lib/auth'
 
 export function LoginFormComponent() {
@@ -16,29 +16,24 @@ export function LoginFormComponent() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
+
+    if (!email.trim()) {
+      setError('Email is required')
+      return
+    }
+    if (!password.trim()) {
+      setError('Password is required')
+      return
+    }
+
     setIsLoading(true)
-
     try {
-      // Validate required fields
-      if (!email.trim()) {
-        setError('Email is required')
-        setIsLoading(false)
-        return
-      }
-
-      if (!password.trim()) {
-        setError('Password is required')
-        setIsLoading(false)
-        return
-      }
-
-      // Call login API
       await signInWithEmail(email, password)
-      // Navigate to dashboard on success
       router.push('/dashboard')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred. Please try again.')
-      console.error(err)
+      const msg = err instanceof Error ? err.message : 'Could not connect to server. Make sure the backend is running.'
+      setError(msg)
+    } finally {
       setIsLoading(false)
     }
   }
@@ -54,8 +49,9 @@ export function LoginFormComponent() {
         </p>
 
         {error && (
-          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 mb-6">
-            <p className="text-red-800 dark:text-red-300 text-sm">{error}</p>
+          <div className="flex items-start gap-3 bg-red-50 dark:bg-red-900/30 border-2 border-red-400 dark:border-red-600 rounded-lg p-4 mb-6">
+            <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
+            <p className="text-red-700 dark:text-red-300 text-sm font-medium">{error}</p>
           </div>
         )}
 
@@ -79,9 +75,17 @@ export function LoginFormComponent() {
           </div>
 
           <div>
-            <label htmlFor="password" className="block text-sm font-medium text-[#1F2937] dark:text-white mb-2">
-              Password
-            </label>
+            <div className="flex items-center justify-between mb-2">
+              <label htmlFor="password" className="block text-sm font-medium text-[#1F2937] dark:text-white">
+                Password
+              </label>
+              <Link
+                href="/forgot-password"
+                className="text-xs text-[#2C5AA0] hover:text-[#1E3A5F] font-medium"
+              >
+                Forgot password?
+              </Link>
+            </div>
             <div className="relative">
               <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[#6B7280] dark:text-gray-500" />
               <input

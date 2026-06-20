@@ -1,6 +1,16 @@
-import { redirect } from 'next/navigation'
+'use client'
+
+import { useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { getToken } from '@/lib/auth'
 
 export default function Home() {
-  // Open the app on the signup page by default
-  redirect('/signup')
+  const router = useRouter()
+
+  useEffect(() => {
+    const token = getToken()
+    router.replace(token ? '/dashboard' : '/signup')
+  }, [router])
+
+  return null
 }
