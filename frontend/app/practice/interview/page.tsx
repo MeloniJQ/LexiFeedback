@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import Link from 'next/link'
 import { getToken } from '@/lib/auth'
+import { API_URL as API } from '@/lib/api'
 import { useVoiceRecorder } from '@/hooks/use-voice-recorder'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -83,7 +84,7 @@ type Stage =
   | 'done'
   | 'feedback'
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000/api'
+
 
 const TYPE_COLORS: Record<string, string> = {
   behavioral:        'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300',

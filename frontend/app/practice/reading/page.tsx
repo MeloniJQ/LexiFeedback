@@ -5,6 +5,7 @@ import { Header } from '@/components/layout/header'
 import { Sidebar } from '@/components/layout/sidebar'
 import { Button } from '@/components/ui/button'
 import { getToken } from '@/lib/auth'
+import { API_URL as API } from '@/lib/api'
 import { useVoiceRecorder } from '@/hooks/use-voice-recorder'
 import {
   Mic, Square, Send, Volume2, VolumeX, Sparkles, Tv, BookOpen,
@@ -24,7 +25,7 @@ interface PronunciationFeedback {
   feedback_markdown: string
 }
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000/api'
+
 
 const NEWS_TICKERS = [
   "BREAKING NEWS: LexiFeed releases TV News Anchor Practice Mode for advanced speech training...",
