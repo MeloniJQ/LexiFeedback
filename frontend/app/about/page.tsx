@@ -1,57 +1,103 @@
-'use client'
+﻿'use client'
 
 import { Header } from '@/components/layout/header'
 import { Sidebar } from '@/components/layout/sidebar'
 import { Button } from '@/components/ui/button'
-import { MessageSquare, Target, Users, Award, Heart, Zap } from 'lucide-react'
+import {
+  Briefcase,
+  Presentation,
+  MessageCircle,
+  BookOpen,
+  Zap,
+  TrendingUp,
+  Flag,
+  UserCheck,
+  ListChecks,
+  Mic2,
+  Layers,
+  MessageSquare,
+  BarChart3,
+  Heart,
+} from 'lucide-react'
 
 export default function AboutPage() {
   const features = [
     {
-      icon: <MessageSquare className="w-8 h-8 text-blue-600" />,
-      title: 'AI-Powered Feedback',
-      description: 'Get instant, personalized feedback on your English speaking skills using advanced AI technology.'
+      icon: <Briefcase className="w-8 h-8 text-sky-500" />,
+      title: 'Interview Practice',
+      description:
+        'Mock interview sessions with AI-generated questions, voice recording, and structured feedback on your responses.',
     },
     {
-      icon: <Target className="w-8 h-8 text-green-600" />,
-      title: 'Multiple Practice Modes',
-      description: 'Choose from interview practice, presentations, conversations, and reading exercises tailored to your needs.'
+      icon: <Presentation className="w-8 h-8 text-violet-500" />,
+      title: 'Presentation Training',
+      description:
+        'Practice slide-based delivery and receive guidance on clarity, pacing, and presentation structure.',
     },
     {
-      icon: <Users className="w-8 h-8 text-purple-600" />,
-      title: 'Real-World Scenarios',
-      description: 'Practice with realistic situations you\'ll encounter in professional and personal settings.'
+      icon: <MessageCircle className="w-8 h-8 text-emerald-500" />,
+      title: 'Casual Conversation',
+      description:
+        'Build speaking fluency through informal dialogue practice, topic prompts, and AI conversation responses.',
     },
     {
-      icon: <Award className="w-8 h-8 text-orange-600" />,
+      icon: <BookOpen className="w-8 h-8 text-orange-500" />,
+      title: 'Reading Practice',
+      description:
+        'Read passages aloud, compare your transcript with source text, and improve pronunciation and intonation.',
+    },
+    {
+      icon: <Zap className="w-8 h-8 text-amber-500" />,
+      title: 'AI Feedback & Analysis',
+      description:
+        'The backend analyzes responses and returns actionable feedback on vocabulary, delivery, grammar, and relevance.',
+    },
+    {
+      icon: <TrendingUp className="w-8 h-8 text-cyan-500" />,
       title: 'Progress Tracking',
-      description: 'Monitor your improvement with detailed analytics and set achievable learning goals.'
-    }
-  ]
-
-  const team = [
-    {
-      name: 'Sarah Johnson',
-      role: 'AI Research Lead',
-      bio: 'PhD in Natural Language Processing with 8+ years experience in speech recognition and language learning technologies.'
+      description:
+        'Review session history, feedback notes, and performance trends on the dashboard to see improvement over time.',
     },
     {
-      name: 'Michael Chen',
-      role: 'Product Manager',
-      bio: 'Former ESL teacher with a passion for leveraging technology to make language learning accessible to everyone.'
+      icon: <Flag className="w-8 h-8 text-rose-500" />,
+      title: 'Goal Setting',
+      description:
+        'Define learning goals and focus on specific practice areas to make progress more intentional.',
     },
     {
-      name: 'Dr. Emily Rodriguez',
-      role: 'Linguistics Expert',
-      bio: 'Professor of Applied Linguistics specializing in second language acquisition and pronunciation training.'
-    }
+      icon: <UserCheck className="w-8 h-8 text-lime-500" />,
+      title: 'Personalized Learning',
+      description:
+        'Choose the practice paths that matter most to you and receive feedback that supports your speaking goals.',
+    },
   ]
 
-  const stats = [
-    { number: '50K+', label: 'Active Learners' },
-    { number: '1M+', label: 'Practice Sessions' },
-    { number: '95%', label: 'Satisfaction Rate' },
-    { number: '40+', label: 'Countries Served' }
+  const workSteps = [
+    {
+      icon: <ListChecks className="w-8 h-8 text-sky-500" />,
+      title: 'Choose Practice Mode',
+      description: 'Select interview, presentation, conversation, or reading practice from the dashboard.',
+    },
+    {
+      icon: <Mic2 className="w-8 h-8 text-emerald-500" />,
+      title: 'Respond by Speaking or Typing',
+      description: 'Record your answer or submit a typed response inside the practice session.',
+    },
+    {
+      icon: <Layers className="w-8 h-8 text-violet-500" />,
+      title: 'AI Analyzes Responses',
+      description: 'Server-side feedback routes evaluate your transcript and identify strengths and improvement areas.',
+    },
+    {
+      icon: <MessageSquare className="w-8 h-8 text-orange-500" />,
+      title: 'Receive Feedback',
+      description: 'Review detailed notes on vocabulary, fluency, pronunciation, grammar, and structure.',
+    },
+    {
+      icon: <BarChart3 className="w-8 h-8 text-cyan-500" />,
+      title: 'Track Improvement',
+      description: 'Use the dashboard to monitor your learning journey and revisit practice sessions over time.',
+    },
   ]
 
   return (
@@ -62,161 +108,159 @@ export default function AboutPage() {
 
         <main className="flex-1 overflow-auto p-6 lg:p-8">
           <div className="max-w-6xl mx-auto space-y-12">
-            {/* Hero Section */}
-            <div className="text-center py-12">
-              <h1 className="text-4xl font-bold text-[#1F2937] dark:text-white mb-4">
-                About Lexical
-              </h1>
-              <p className="text-xl text-[#6B7280] dark:text-gray-400 max-w-3xl mx-auto leading-relaxed">
-                We're on a mission to democratize English language learning through cutting-edge AI technology.
-                Our platform provides personalized, real-time feedback to help you master spoken English with confidence.
-              </p>
-            </div>
-
-            {/* Mission Statement */}
-            <div className="bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 rounded-lg p-8 border border-blue-200 dark:border-blue-800">
-              <div className="text-center">
-                <Heart className="w-12 h-12 text-red-500 mx-auto mb-4" />
-                <h2 className="text-2xl font-bold text-[#1F2937] dark:text-white mb-4">
-                  Our Mission
-                </h2>
-                <p className="text-lg text-[#6B7280] dark:text-gray-400 max-w-4xl mx-auto leading-relaxed">
-                  We believe that effective communication is the key to success in today's global world.
-                  Lexical was born from the realization that traditional language learning methods often fall short
-                  in developing real-world speaking skills. Our AI-powered platform bridges this gap by providing
-                  immediate, actionable feedback that helps learners speak English naturally and confidently.
-                </p>
-              </div>
-            </div>
-
-            {/* Stats */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-              {stats.map((stat, index) => (
-                <div key={index} className="text-center">
-                  <div className="text-3xl font-bold text-[#2C5AA0] dark:text-white mb-2">
-                    {stat.number}
-                  </div>
-                  <div className="text-[#6B7280] dark:text-gray-400">
-                    {stat.label}
+            <section className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#111827] p-10">
+              <div className="grid gap-10 lg:grid-cols-[1.2fr_0.8fr] lg:items-center">
+                <div>
+                  <p className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">
+                    About Lexical
+                  </p>
+                  <h1 className="mt-4 text-4xl font-bold tracking-tight text-slate-950 dark:text-white sm:text-5xl">
+                    AI-powered practice for spoken English, interviews, presentations, conversations, and reading.
+                  </h1>
+                  <p className="mt-6 text-lg leading-8 text-slate-600 dark:text-slate-300">
+                    Lexical is a student-focused English communication platform that combines targeted practice modes with AI feedback.
+                    Learners can practice real speaking tasks, receive personalized analysis, and build confidence through measurable progress.
+                  </p>
+                  <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
+                    <Button asChild>
+                      <a href="/dashboard" className="w-full text-center sm:w-auto">
+                        Start practicing
+                      </a>
+                    </Button>
+                    <Button variant="outline" asChild>
+                      <a href="/dashboard/feedback" className="w-full text-center sm:w-auto">
+                        See feedback dashboard
+                      </a>
+                    </Button>
                   </div>
                 </div>
-              ))}
-            </div>
 
-            {/* Features */}
-            <div>
-              <h2 className="text-3xl font-bold text-[#1F2937] dark:text-white text-center mb-8">
-                What Makes Us Different
-              </h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                {features.map((feature, index) => (
-                  <div key={index} className="bg-white dark:bg-[#1F2937] rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-                    <div className="flex items-start gap-4">
-                      <div className="flex-shrink-0">
-                        {feature.icon}
-                      </div>
-                      <div>
-                        <h3 className="text-xl font-semibold text-[#1F2937] dark:text-white mb-2">
-                          {feature.title}
-                        </h3>
-                        <p className="text-[#6B7280] dark:text-gray-400 leading-relaxed">
-                          {feature.description}
-                        </p>
-                      </div>
+                <div className="rounded-3xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111827] p-8 shadow-sm">
+                  <p className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">
+                    Why learners choose Lexical
+                  </p>
+                  <ul className="mt-6 space-y-4 text-slate-700 dark:text-slate-300">
+                    <li className="rounded-2xl bg-slate-50 dark:bg-slate-900 p-4">
+                      <p className="font-semibold">Focused speaking practice</p>
+                      <p className="text-sm text-slate-600 dark:text-slate-400">
+                        Practice with mode-specific exercises designed for real English speaking scenarios.
+                      </p>
+                    </li>
+                    <li className="rounded-2xl bg-slate-50 dark:bg-slate-900 p-4">
+                      <p className="font-semibold">Personalized feedback</p>
+                      <p className="text-sm text-slate-600 dark:text-slate-400">
+                        Receive feedback that targets vocabulary, delivery, pronunciation, and communication clarity.
+                      </p>
+                    </li>
+                    <li className="rounded-2xl bg-slate-50 dark:bg-slate-900 p-4">
+                      <p className="font-semibold">Progress tracking</p>
+                      <p className="text-sm text-slate-600 dark:text-slate-400">
+                        Track your sessions, review past feedback, and stay on course with learning goals.
+                      </p>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </section>
+
+            <section className="grid gap-6 md:grid-cols-2">
+              <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] p-8">
+                <h2 className="text-2xl font-semibold text-slate-950 dark:text-white">Problem We Solve</h2>
+                <p className="mt-4 text-slate-600 dark:text-slate-300 leading-7">
+                  Many learners struggle with limited speaking practice, unclear vocabulary choices, interview anxiety,
+                  and a lack of structured feedback. Lexical offers a practical way to practice real English and get focused improvement guidance.
+                </p>
+                <div className="mt-6 space-y-4">
+                  {[
+                    'Limited vocabulary and phrase variety in spoken English.',
+                    'Difficulty finding realistic speaking practice.',
+                    'Interview and presentation anxiety without feedback.',
+                    'No clear path for tracking spoken language progress.',
+                  ].map((item) => (
+                    <div key={item} className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 p-4 text-slate-700 dark:text-slate-300">
+                      {item}
                     </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] p-8">
+                <h2 className="text-2xl font-semibold text-slate-950 dark:text-white">Our Solution</h2>
+                <p className="mt-4 text-slate-600 dark:text-slate-300 leading-7">
+                  Lexical provides practice modes, AI-assisted feedback, and progress tracking so learners can practice purposefully
+                  and grow speaking confidence across interviews, presentations, conversations, and reading exercises.
+                </p>
+                <div className="mt-6 grid gap-4">
+                  {[
+                    'Interview Practice with mock questions and answer analysis.',
+                    'Presentation Practice for delivery and structure feedback.',
+                    'Casual Conversation Practice for natural speaking fluency.',
+                    'Reading Practice to improve pronunciation and comprehension.',
+                    'AI analysis of responses with actionable feedback.',
+                    'Progress insights and goal-based learning pathways.',
+                  ].map((item) => (
+                    <div key={item} className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 p-4 text-slate-700 dark:text-slate-300">
+                      {item}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#111827] p-8">
+              <h2 className="text-3xl font-semibold text-slate-950 dark:text-white text-center mb-8">Key Features</h2>
+              <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
+                {features.map((feature) => (
+                  <div key={feature.title} className="rounded-3xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111827] p-6 shadow-sm">
+                    <div className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 dark:bg-slate-900">
+                      {feature.icon}
+                    </div>
+                    <h3 className="text-xl font-semibold text-slate-950 dark:text-white mb-2">{feature.title}</h3>
+                    <p className="text-slate-600 dark:text-slate-300 leading-7">{feature.description}</p>
                   </div>
                 ))}
               </div>
-            </div>
+            </section>
 
-            {/* Technology */}
-            <div className="bg-white dark:bg-[#1F2937] rounded-lg border border-gray-200 dark:border-gray-700 p-8">
-              <div className="text-center mb-8">
-                <Zap className="w-12 h-12 text-yellow-500 mx-auto mb-4" />
-                <h2 className="text-2xl font-bold text-[#1F2937] dark:text-white mb-4">
-                  Powered by Advanced AI
-                </h2>
-                <p className="text-[#6B7280] dark:text-gray-400 max-w-3xl mx-auto leading-relaxed">
-                  Our proprietary AI models are trained on millions of hours of natural speech data,
-                  enabling us to provide highly accurate feedback on pronunciation, fluency, grammar,
-                  and communication effectiveness. We continuously update our models to ensure
-                  the most relevant and helpful guidance for our users.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="text-center p-4">
-                  <div className="text-2xl font-bold text-[#2C5AA0] dark:text-white mb-2">
-                    99.5%
-                  </div>
-                  <div className="text-[#6B7280] dark:text-gray-400">
-                    Accuracy Rate
-                  </div>
-                </div>
-                <div className="text-center p-4">
-                  <div className="text-2xl font-bold text-[#10B981] dark:text-[#68D391] mb-2">
-                    &lt;200ms
-                  </div>
-                  <div className="text-[#6B7280] dark:text-gray-400">
-                    Response Time
-                  </div>
-                </div>
-                <div className="text-center p-4">
-                  <div className="text-2xl font-bold text-[#F59E0B] dark:text-[#FCD34D] mb-2">
-                    24/7
-                  </div>
-                  <div className="text-[#6B7280] dark:text-gray-400">
-                    Availability
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Team */}
-            <div>
-              <h2 className="text-3xl font-bold text-[#1F2937] dark:text-white text-center mb-8">
-                Meet Our Team
-              </h2>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                {team.map((member, index) => (
-                  <div key={index} className="bg-white dark:bg-[#1F2937] rounded-lg border border-gray-200 dark:border-gray-700 p-6 text-center">
-                    <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full mx-auto mb-4 flex items-center justify-center">
-                      <span className="text-white text-2xl font-bold">
-                        {member.name.split(' ').map(n => n[0]).join('')}
-                      </span>
+            <section className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] p-8">
+              <h2 className="text-3xl font-semibold text-slate-950 dark:text-white text-center mb-8">How It Works</h2>
+              <div className="grid gap-6 md:grid-cols-5">
+                {workSteps.map((step) => (
+                  <div key={step.title} className="rounded-3xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#111827] p-6 text-center">
+                    <div className="mx-auto mb-4 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-white dark:bg-slate-900 shadow-sm">
+                      {step.icon}
                     </div>
-                    <h3 className="text-xl font-semibold text-[#1F2937] dark:text-white mb-2">
-                      {member.name}
-                    </h3>
-                    <p className="text-[#2C5AA0] dark:text-white font-medium mb-3">
-                      {member.role}
-                    </p>
-                    <p className="text-[#6B7280] dark:text-gray-400 text-sm leading-relaxed">
-                      {member.bio}
-                    </p>
+                    <h3 className="text-lg font-semibold text-slate-950 dark:text-white mb-2">{step.title}</h3>
+                    <p className="text-slate-600 dark:text-slate-300 text-sm leading-relaxed">{step.description}</p>
                   </div>
                 ))}
               </div>
-            </div>
+            </section>
 
-            {/* Contact */}
-            <div className="bg-gray-50 dark:bg-[#1F2937] rounded-lg p-8 text-center border border-gray-200 dark:border-gray-700">
-              <h2 className="text-2xl font-bold text-[#1F2937] dark:text-white mb-4">
-                Get in Touch
-              </h2>
-              <p className="text-[#6B7280] dark:text-gray-400 mb-6 max-w-2xl mx-auto">
-                Have questions, feedback, or suggestions? We'd love to hear from you.
-                Your input helps us improve and better serve the language learning community.
-              </p>
-              <div className="flex flex-col sm:flex-row gap-4 justify-center">
-                <Button className="bg-[#2C5AA0] hover:bg-[#1E3A5F] text-white">
-                  Contact Support
-                </Button>
-                <Button variant="outline">
-                  Join Our Community
-                </Button>
+            <section className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-gradient-to-r from-slate-50 to-slate-100 dark:from-slate-900/40 dark:to-slate-800/20 p-10">
+              <div className="max-w-4xl mx-auto text-center">
+                <div className="inline-flex items-center justify-center rounded-3xl bg-slate-900/5 px-4 py-2 text-sm font-semibold uppercase tracking-[0.24em] text-slate-700 dark:text-slate-200">
+                  <Heart className="mr-2 h-4 w-4 text-rose-500" />
+                  Project Vision
+                </div>
+                <h2 className="mt-6 text-3xl font-semibold text-slate-950 dark:text-white">A platform for confident English communication</h2>
+                <p className="mt-4 text-slate-600 dark:text-slate-300 leading-8">
+                  Lexical helps learners practice speaking in real-world scenarios, reduce communication anxiety, and make English practice
+                  more consistent by combining intelligent feedback with accessible full-stack tools.
+                </p>
+                <div className="mt-8 grid gap-4 md:grid-cols-3">
+                  {[
+                    'Improve communication skills for interviews, presentations, and everyday conversation.',
+                    'Build confidence through structured practice and thoughtful AI guidance.',
+                    'Make English practice accessible with personalized learning pathways and progress monitoring.',
+                  ].map((item) => (
+                    <div key={item} className="rounded-3xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111827] p-6 text-slate-600 dark:text-slate-300">
+                      {item}
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
+            </section>
           </div>
         </main>
       </div>
