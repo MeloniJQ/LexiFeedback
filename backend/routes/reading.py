@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from utils.jwt_handler import token_required
 from services.ai_service import generate_ai_passage, analyze_pronunciation
+from services.goal_service import auto_track_progress
 
 reading_bp = Blueprint("reading", __name__)
 
@@ -10,10 +11,10 @@ def generate(payload):
     """
     POST /api/practice/reading/generate
     JSON body:
-      {
+    {
         "difficulty": "beginner" | "intermediate" | "advanced",
         "mode": "standard" | "journalist"
-      }
+    }
     """
     try:
         data = request.json or {}
@@ -25,7 +26,10 @@ def generate(payload):
         if mode not in ["standard", "journalist"]:
             mode = "standard"
 
-        passage_data = generate_ai_passage(difficulty=difficulty, mode=mode)
+        passage_data = generate_ai_passage(
+            difficulty=difficulty,
+            mode=mode
+        )
         return jsonify(passage_data), 200
 
     except Exception as e:
@@ -38,13 +42,14 @@ def generate(payload):
 def feedback(payload):
     """
     POST /api/practice/reading/feedback
+
     JSON body:
-      {
+    {
         "transcript": "what the user said",
         "originalText": "the reference text",
         "difficulty": "...",
         "mode": "..."
-      }
+    }
     """
     try:
         data = request.json or {}
@@ -54,7 +59,16 @@ def feedback(payload):
         if not original_text:
             return jsonify({"error": "originalText is required"}), 400
 
-        analysis = analyze_pronunciation(transcript=transcript, original_text=original_text)
+        analysis = analyze_pronunciation(
+            transcript=transcript,
+            original_text=original_text,
+        )
+
+        try:
+            auto_track_progress(payload["user_id"], "reading")
+        except Exception:
+            pass  # never let goal tracking break the main feedback response
+
         return jsonify(analysis), 200
 
     except Exception as e:
