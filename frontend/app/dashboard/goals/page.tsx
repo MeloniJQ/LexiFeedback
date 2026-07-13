@@ -1,326 +1,305 @@
 'use client'
 
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Target, Plus, CheckCircle, Clock, TrendingUp } from 'lucide-react'
-import { useState } from 'react'
-
-interface Goal {
-  id: string
-  title: string
-  description: string
-  type: 'sessions' | 'skill' | 'time'
-  target: number
-  current: number
-  deadline: string
-  status: 'active' | 'completed' | 'overdue'
-}
+import { Plus, Loader2, AlertCircle } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
+import {
+  createGoal,
+  deleteGoal,
+  getGoalStats,
+  getGoals,
+  updateGoal,
+  updateGoalProgress,
+  type Goal,
+  type GoalStats,
+  GoalValidationError,
+} from '@/lib/api'
+import { GoalForm, type GoalFormValues } from '@/components/goals/goal-form'
+import { GoalCard } from '@/components/goals/goal-card'
+import { GoalStatsCards } from '@/components/goals/goal-stats-cards'
+import { GoalsToolbar, type FilterOption, type SortOption } from '@/components/goals/goals-toolbar'
+import { EmptyState } from '@/components/goals/empty-state'
+import { DeleteGoalDialog } from '@/components/goals/delete-goal-dialog'
 
 export default function GoalsPage() {
-  const [goals, setGoals] = useState<Goal[]>([
-    {
-      id: '1',
-      title: 'Complete 20 Interview Sessions',
-      description: 'Practice interview skills with various scenarios',
-      type: 'sessions',
-      target: 20,
-      current: 12,
-      deadline: '2024-02-15',
-      status: 'active'
-    },
-    {
-      id: '2',
-      title: 'Improve Pronunciation Score',
-      description: 'Achieve 80% or higher in pronunciation assessments',
-      type: 'skill',
-      target: 80,
-      current: 65,
-      deadline: '2024-02-20',
-      status: 'active'
-    },
-    {
-      id: '3',
-      title: 'Practice Daily for 30 Days',
-      description: 'Maintain a daily practice streak',
-      type: 'time',
-      target: 30,
-      current: 15,
-      deadline: '2024-02-10',
-      status: 'active'
+  const [goals, setGoals] = useState<Goal[]>([])
+  const [stats, setStats] = useState<GoalStats | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const [showForm, setShowForm] = useState(false)
+  const [editingGoal, setEditingGoal] = useState<Goal | null>(null)
+  const [formErrors, setFormErrors] = useState<Record<string, string> | undefined>(undefined)
+
+  const [deleteTarget, setDeleteTarget] = useState<Goal | null>(null)
+  const [recentlyUpdatedId, setRecentlyUpdatedId] = useState<number | null>(null)
+
+  const [search, setSearch] = useState('')
+  const [sort, setSort] = useState<SortOption>('newest')
+  const [filter, setFilter] = useState<FilterOption>('all')
+
+  const formRef = useRef<HTMLDivElement | null>(null)
+
+  const loadData = async () => {
+    try {
+      setError(null)
+      const [goalsData, statsData] = await Promise.all([getGoals(), getGoalStats()])
+      setGoals(goalsData)
+      setStats(statsData)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load goals')
+    } finally {
+      setLoading(false)
     }
-  ])
+  }
 
-  const [showNewGoalForm, setShowNewGoalForm] = useState(false)
-  const [newGoal, setNewGoal] = useState({
-    title: '',
-    description: '',
-    type: 'sessions' as const,
-    target: '',
-    deadline: ''
-  })
+  useEffect(() => {
+    loadData()
+  }, [])
 
-  const handleCreateGoal = () => {
-    if (!newGoal.title || !newGoal.target || !newGoal.deadline) return
-
-    const goal: Goal = {
-      id: Date.now().toString(),
-      title: newGoal.title,
-      description: newGoal.description,
-      type: newGoal.type,
-      target: parseInt(newGoal.target),
-      current: 0,
-      deadline: newGoal.deadline,
-      status: 'active'
+  const refreshStats = async () => {
+    try {
+      setStats(await getGoalStats())
+    } catch {
+      // stats are non-critical; ignore refresh failures
     }
+  }
 
-    setGoals([...goals, goal])
-    setNewGoal({
-      title: '',
-      description: '',
-      type: 'sessions',
-      target: '',
-      deadline: ''
+  // ── New Goal button ───────────────────────────────────────────────────
+  const openCreateForm = () => {
+    setEditingGoal(null)
+    setFormErrors(undefined)
+    setShowForm(true)
+    requestAnimationFrame(() => {
+      formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     })
-    setShowNewGoalForm(false)
   }
 
-  const getProgressPercentage = (goal: Goal) => {
-    return Math.min((goal.current / goal.target) * 100, 100)
+  const closeForm = () => {
+    setShowForm(false)
+    setEditingGoal(null)
+    setFormErrors(undefined)
   }
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'completed': return 'text-green-600'
-      case 'overdue': return 'text-red-600'
-      default: return 'text-blue-600'
+  // ── Create / Edit submit ──────────────────────────────────────────────
+  const handleFormSubmit = async (values: GoalFormValues) => {
+    try {
+      if (editingGoal) {
+        const { goal } = await updateGoal(editingGoal.id, {
+          title: values.title.trim(),
+          description: values.description.trim(),
+          goalType: values.goalType,
+          targetValue: Number(values.targetValue),
+          deadline: values.deadline,
+        })
+        setGoals((prev) => prev.map((g) => (g.id === goal.id ? goal : g)))
+        toast.success('Goal Updated')
+      } else {
+        const { goal } = await createGoal({
+          title: values.title.trim(),
+          description: values.description.trim(),
+          goalType: values.goalType,
+          targetValue: Number(values.targetValue),
+          deadline: values.deadline,
+        })
+        setGoals((prev) => [goal, ...prev])
+        toast.success('Goal Created Successfully')
+      }
+      closeForm()
+      refreshStats()
+    } catch (e) {
+      if (e instanceof GoalValidationError) {
+        setFormErrors(e.errors)
+      } else {
+        toast.error(e instanceof Error ? e.message : 'Something went wrong')
+      }
     }
   }
 
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'completed': return <CheckCircle className="w-5 h-5" />
-      case 'overdue': return <Clock className="w-5 h-5" />
-      default: return <Target className="w-5 h-5" />
+  const handleEdit = (goal: Goal) => {
+    setEditingGoal(goal)
+    setFormErrors(undefined)
+    setShowForm(true)
+    requestAnimationFrame(() => {
+      formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+  }
+
+  // ── Delete ─────────────────────────────────────────────────────────────
+  const confirmDelete = async () => {
+    if (!deleteTarget) return
+    const target = deleteTarget
+    setDeleteTarget(null)
+    try {
+      await deleteGoal(target.id)
+      setGoals((prev) => prev.filter((g) => g.id !== target.id))
+      toast.success('Goal Deleted')
+      refreshStats()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to delete goal')
     }
   }
+
+  // ── Progress updates ──────────────────────────────────────────────────
+  const handleUpdateProgress = async (goal: Goal, mode: 'increment' | 'set', value: number) => {
+    try {
+      const prevStreak = goal.streakCount
+      const body = mode === 'increment' ? ({ mode: 'increment', amount: value } as const) : ({ mode: 'set', value } as const)
+      const { goal: updated, justCompleted, streakIncreased } = await updateGoalProgress(goal.id, body)
+
+      setGoals((prev) => prev.map((g) => (g.id === updated.id ? updated : g)))
+      setRecentlyUpdatedId(updated.id)
+      setTimeout(() => setRecentlyUpdatedId((id) => (id === updated.id ? null : id)), 1200)
+
+      if (justCompleted) {
+        toast.success('Goal Completed 🎉')
+      } else {
+        toast.success('Progress Updated')
+      }
+      if (streakIncreased && updated.streakCount > prevStreak) {
+        toast('🔥 Streak Increased', { description: `${updated.streakCount} day streak on "${updated.title}"` })
+      }
+      refreshStats()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to update progress')
+    }
+  }
+
+  // ── Derived list: search + filter + sort ──────────────────────────────
+  const visibleGoals = useMemo(() => {
+    let list = [...goals]
+
+    if (search.trim()) {
+      const q = search.trim().toLowerCase()
+      list = list.filter((g) => g.title.toLowerCase().includes(q))
+    }
+
+    if (filter !== 'all') {
+      list = list.filter((g) => g.status === filter)
+    }
+
+    switch (sort) {
+      case 'oldest':
+        list.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+        break
+      case 'deadline':
+        list.sort((a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime())
+        break
+      case 'progress':
+        list.sort((a, b) => b.progressPercentage - a.progressPercentage)
+        break
+      case 'completed':
+        list.sort((a, b) => Number(b.completed) - Number(a.completed))
+        break
+      case 'alphabetical':
+        list.sort((a, b) => a.title.localeCompare(b.title))
+        break
+      case 'newest':
+      default:
+        list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        break
+    }
+
+    return list
+  }, [goals, search, filter, sort])
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h1 className="text-3xl font-bold text-[#1F2937] dark:text-white mb-2">
-                  Set Goals
-                </h1>
-                <p className="text-[#6B7280] dark:text-gray-400">
-                  Define your learning objectives and track your progress
-                </p>
-              </div>
-              <Button
-                onClick={() => setShowNewGoalForm(true)}
-                className="flex items-center gap-2"
-              >
-                <Plus className="w-4 h-4" />
-                New Goal
-              </Button>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-[#1F2937] dark:text-white mb-2">Set Goals</h1>
+          <p className="text-[#6B7280] dark:text-gray-400">
+            Define your learning objectives and track your progress
+          </p>
+        </div>
+        {!showForm && (
+          <Button onClick={openCreateForm} className="flex items-center gap-2">
+            <Plus className="w-4 h-4" />
+            New Goal
+          </Button>
+        )}
+      </div>
+
+      {loading && (
+        <div className="flex items-center justify-center py-20 text-[#6B7280] dark:text-gray-400">
+          <Loader2 className="w-5 h-5 animate-spin mr-2" />
+          Loading your goals…
+        </div>
+      )}
+
+      {!loading && error && (
+        <div className="flex items-center gap-2 p-4 rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 text-sm">
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          {error}
+          <Button size="sm" variant="outline" className="ml-auto" onClick={loadData}>
+            Retry
+          </Button>
+        </div>
+      )}
+
+      {!loading && !error && (
+        <>
+          {stats && <GoalStatsCards stats={stats} />}
+
+          {/* Create / Edit Goal Form */}
+          {showForm && (
+            <div
+              ref={formRef}
+              className="bg-white dark:bg-[#1F2937] rounded-lg border border-gray-200 dark:border-gray-700 p-6 animate-in fade-in slide-in-from-top-2 duration-300"
+            >
+              <h2 className="text-xl font-semibold text-[#1F2937] dark:text-white mb-4">
+                {editingGoal ? 'Edit Goal' : 'Create New Goal'}
+              </h2>
+              <GoalForm
+                initialGoal={editingGoal}
+                onSubmit={handleFormSubmit}
+                onCancel={closeForm}
+                submitLabel={editingGoal ? 'Save Changes' : 'Create Goal'}
+                externalErrors={formErrors}
+              />
             </div>
+          )}
 
-            {/* New Goal Form */}
-            {showNewGoalForm && (
-              <div className="bg-white dark:bg-[#1F2937] rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-                <h2 className="text-xl font-semibold text-[#1F2937] dark:text-white mb-4">
-                  Create New Goal
-                </h2>
+          {goals.length > 0 && (
+            <GoalsToolbar
+              search={search}
+              onSearchChange={setSearch}
+              sort={sort}
+              onSortChange={setSort}
+              filter={filter}
+              onFilterChange={setFilter}
+            />
+          )}
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                  <div>
-                    <label className="block text-sm font-medium text-[#1F2937] dark:text-white mb-2">
-                      Goal Title
-                    </label>
-                    <Input
-                      value={newGoal.title}
-                      onChange={(e) => setNewGoal({...newGoal, title: e.target.value})}
-                      placeholder="e.g., Complete 10 interview sessions"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-[#1F2937] dark:text-white mb-2">
-                      Goal Type
-                    </label>
-                    <Select
-                      value={newGoal.type}
-                      onValueChange={(value: 'sessions' | 'skill' | 'time') =>
-                        setNewGoal({...newGoal, type: value})
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="sessions">Practice Sessions</SelectItem>
-                        <SelectItem value="skill">Skill Level</SelectItem>
-                        <SelectItem value="time">Time-based</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                  <div>
-                    <label className="block text-sm font-medium text-[#1F2937] dark:text-white mb-2">
-                      Target Value
-                    </label>
-                    <Input
-                      type="number"
-                      value={newGoal.target}
-                      onChange={(e) => setNewGoal({...newGoal, target: e.target.value})}
-                      placeholder="e.g., 10, 80, 30"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-[#1F2937] dark:text-white mb-2">
-                      Deadline
-                    </label>
-                    <Input
-                      type="date"
-                      value={newGoal.deadline}
-                      onChange={(e) => setNewGoal({...newGoal, deadline: e.target.value})}
-                    />
-                  </div>
-                </div>
-
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-[#1F2937] dark:text-white mb-2">
-                    Description (Optional)
-                  </label>
-                  <Textarea
-                    value={newGoal.description}
-                    onChange={(e) => setNewGoal({...newGoal, description: e.target.value})}
-                    placeholder="Describe your goal in more detail..."
-                    rows={3}
-                  />
-                </div>
-
-                <div className="flex gap-2">
-                  <Button onClick={handleCreateGoal}>
-                    Create Goal
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => setShowNewGoalForm(false)}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              </div>
-            )}
-
-            {/* Goals List */}
+          {/* Goals List */}
+          {goals.length === 0 ? (
+            <EmptyState onCreateGoal={openCreateForm} />
+          ) : visibleGoals.length === 0 ? (
+            <EmptyState onCreateGoal={openCreateForm} isFiltered />
+          ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {goals.map((goal) => (
-                <div key={goal.id} className="bg-white dark:bg-[#1F2937] rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-                  <div className="flex items-start justify-between mb-4">
-                    <div className="flex items-center gap-3">
-                      <div className={getStatusColor(goal.status)}>
-                        {getStatusIcon(goal.status)}
-                      </div>
-                      <div>
-                        <h3 className="font-semibold text-[#1F2937] dark:text-white">
-                          {goal.title}
-                        </h3>
-                        <p className="text-sm text-[#6B7280] dark:text-gray-400">
-                          {goal.description}
-                        </p>
-                      </div>
-                    </div>
-                    <span className={`text-xs px-2 py-1 rounded-full ${
-                      goal.status === 'completed'
-                        ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
-                        : goal.status === 'overdue'
-                        ? 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400'
-                        : 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400'
-                    }`}>
-                      {goal.status}
-                    </span>
-                  </div>
-
-                  <div className="space-y-2 mb-4">
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-[#6B7280] dark:text-gray-400">
-                        Progress: {goal.current} / {goal.target}
-                      </span>
-                      <span className="text-[#1F2937] dark:text-white font-medium">
-                        {Math.round(getProgressPercentage(goal))}%
-                      </span>
-                    </div>
-                    <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-                      <div
-                        className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                        style={{ width: `${getProgressPercentage(goal)}%` }}
-                      ></div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-[#6B7280] dark:text-gray-400">
-                      Deadline: {new Date(goal.deadline).toLocaleDateString()}
-                    </span>
-                    <div className="flex items-center gap-1 text-green-600">
-                      <TrendingUp className="w-4 h-4" />
-                      <span>On track</span>
-                    </div>
-                  </div>
-                </div>
+              {visibleGoals.map((goal) => (
+                <GoalCard
+                  key={goal.id}
+                  goal={goal}
+                  onEdit={handleEdit}
+                  onDelete={setDeleteTarget}
+                  onUpdateProgress={handleUpdateProgress}
+                  justUpdated={recentlyUpdatedId === goal.id}
+                />
               ))}
             </div>
+          )}
+        </>
+      )}
 
-            {/* Recommendations */}
-            <div className="bg-white dark:bg-[#1F2937] rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-              <h2 className="text-xl font-semibold text-[#1F2937] dark:text-white mb-4">
-                Recommended Goals
-              </h2>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
-                  <h3 className="font-medium text-[#1F2937] dark:text-white mb-2">
-                    Consistency Goal
-                  </h3>
-                  <p className="text-sm text-[#6B7280] dark:text-gray-400 mb-3">
-                    Practice for 15 minutes daily for the next 30 days
-                  </p>
-                  <Button size="sm" variant="outline">
-                    Set This Goal
-                  </Button>
-                </div>
-
-                <div className="p-4 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
-                  <h3 className="font-medium text-[#1F2937] dark:text-white mb-2">
-                    Skill Mastery
-                  </h3>
-                  <p className="text-sm text-[#6B7280] dark:text-gray-400 mb-3">
-                    Achieve 85% or higher in presentation delivery
-                  </p>
-                  <Button size="sm" variant="outline">
-                    Set This Goal
-                  </Button>
-                </div>
-
-                <div className="p-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
-                  <h3 className="font-medium text-[#1F2937] dark:text-white mb-2">
-                    Challenge Goal
-                  </h3>
-                  <p className="text-sm text-[#6B7280] dark:text-gray-400 mb-3">
-                    Complete 50 practice sessions this month
-                  </p>
-                  <Button size="sm" variant="outline">
-                    Set This Goal
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </div>
+      <DeleteGoalDialog
+        open={Boolean(deleteTarget)}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        onConfirm={confirmDelete}
+        goalTitle={deleteTarget?.title}
+      />
+    </div>
   )
 }
