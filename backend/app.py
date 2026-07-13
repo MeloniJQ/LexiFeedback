@@ -8,9 +8,10 @@ from flask_cors import CORS
 from models import db
 from routes.auth import auth_bp
 from routes.interview import interview_bp
-from routes.voice import voice_bp          # ← NEW Step 2
-from routes.reading import reading_bp      # ← NEW Reading Practice
+from routes.voice import voice_bp
+from routes.reading import reading_bp
 from routes.presentation_upload import presentation_upload_bp
+from routes.goals import goals_bp
 
 import sys
 import os
@@ -44,19 +45,26 @@ app.config.from_pyfile("config.py")
 db.init_app(app)
 
 # Register blueprints
-app.register_blueprint(auth_bp,      url_prefix="/api/auth")
+app.register_blueprint(auth_bp, url_prefix="/api/auth")
 app.register_blueprint(interview_bp, url_prefix="/api/interview")
-app.register_blueprint(reading_bp,   url_prefix="/api/practice/reading")
-app.register_blueprint(voice_bp,     url_prefix="/api/voice")  
-app.register_blueprint(presentation_upload_bp)   # ← NEW
+app.register_blueprint(reading_bp, url_prefix="/api/practice/reading")
+app.register_blueprint(voice_bp, url_prefix="/api/voice")
+app.register_blueprint(presentation_upload_bp)
+app.register_blueprint(goals_bp, url_prefix="/api/goals")
 
 @app.route("/", methods=["GET"])
 def root():
-    return {"message": "LexiFeed API is running", "docs": "/api/health"}
+    return {
+        "message": "LexiFeed API is running",
+        "docs": "/api/health"
+    }
 
 @app.route("/api/health", methods=["GET"])
 def health():
-    return {"status": "ok", "step": 2}
+    return {
+        "status": "ok",
+        "step": 2
+    }
 
 # Create database tables on first run
 with app.app_context():
