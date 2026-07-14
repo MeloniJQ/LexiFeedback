@@ -11,6 +11,7 @@ from routes.interview import interview_bp
 from routes.voice import voice_bp
 from routes.reading import reading_bp
 from routes.presentation_upload import presentation_upload_bp
+from routes.vocabulary import vocabulary_bp
 from routes.goals import goals_bp
 
 import sys
@@ -47,6 +48,10 @@ db.init_app(app)
 # Register blueprints
 app.register_blueprint(auth_bp, url_prefix="/api/auth")
 app.register_blueprint(interview_bp, url_prefix="/api/interview")
+app.register_blueprint(reading_bp,   url_prefix="/api/practice/reading")
+app.register_blueprint(voice_bp,     url_prefix="/api/voice")  
+app.register_blueprint(presentation_upload_bp)   # ← NEW
+app.register_blueprint(vocabulary_bp, url_prefix="/api/vocabulary")
 app.register_blueprint(reading_bp, url_prefix="/api/practice/reading")
 app.register_blueprint(voice_bp, url_prefix="/api/voice")
 app.register_blueprint(presentation_upload_bp)
