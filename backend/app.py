@@ -11,6 +11,7 @@ from routes.interview import interview_bp
 from routes.voice import voice_bp          # ← NEW Step 2
 from routes.reading import reading_bp      # ← NEW Reading Practice
 from routes.presentation_upload import presentation_upload_bp
+from routes.vocabulary import vocabulary_bp
 
 import sys
 import os
@@ -49,7 +50,7 @@ app.register_blueprint(interview_bp, url_prefix="/api/interview")
 app.register_blueprint(reading_bp,   url_prefix="/api/practice/reading")
 app.register_blueprint(voice_bp,     url_prefix="/api/voice")  
 app.register_blueprint(presentation_upload_bp)   # ← NEW
-
+app.register_blueprint(vocabulary_bp, url_prefix="/api/vocabulary")
 @app.route("/", methods=["GET"])
 def root():
     return {"message": "LexiFeed API is running", "docs": "/api/health"}
