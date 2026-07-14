@@ -25,7 +25,7 @@ export const API_URL = getApiUrl()
 
 // ─── Core fetch wrapper ───────────────────────────────────────────────────────
 
-async function apiCall(url: string, options: RequestInit = {}) {
+ export async function apiCall(url: string, options: RequestInit = {}) {
   const token = getToken()
   const headers = {
     'Content-Type': 'application/json',
