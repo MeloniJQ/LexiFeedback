@@ -8,9 +8,19 @@ from flask_cors import CORS
 from models import db
 from routes.auth import auth_bp
 from routes.interview import interview_bp
+from routes.interview_planning import interview_planning_bp
+from routes.interview_session import interview_session_bp
+from routes.question_generation import question_bp
 from routes.voice import voice_bp          # ← NEW Step 2
 from routes.reading import reading_bp      # ← NEW Reading Practice
 from routes.presentation_upload import presentation_upload_bp
+from routes.candidate_intelligence import candidate_bp
+from routes.analytics import analytics_bp
+from routes.reports import reports_bp
+from routes.recommendations import recommendations_bp
+from routes.history import history_bp
+from routes.modes import modes_bp
+from routes.health import health_bp
 
 import sys
 import os
@@ -46,9 +56,19 @@ db.init_app(app)
 # Register blueprints
 app.register_blueprint(auth_bp,      url_prefix="/api/auth")
 app.register_blueprint(interview_bp, url_prefix="/api/interview")
+app.register_blueprint(interview_planning_bp, url_prefix="/api/interview/plan")
+app.register_blueprint(interview_session_bp, url_prefix="/api/interview/session")
+app.register_blueprint(question_bp, url_prefix="/api/interview/questions")
 app.register_blueprint(reading_bp,   url_prefix="/api/practice/reading")
 app.register_blueprint(voice_bp,     url_prefix="/api/voice")  
-app.register_blueprint(presentation_upload_bp)   # ← NEW
+app.register_blueprint(presentation_upload_bp)
+app.register_blueprint(candidate_bp)
+app.register_blueprint(analytics_bp, url_prefix="/api/analytics")
+app.register_blueprint(reports_bp, url_prefix="/api/reports")
+app.register_blueprint(recommendations_bp, url_prefix="/api/recommendations")
+app.register_blueprint(history_bp, url_prefix="/api/history")
+app.register_blueprint(modes_bp, url_prefix="/api/modes")
+app.register_blueprint(health_bp, url_prefix="/api")
 
 @app.route("/", methods=["GET"])
 def root():
@@ -56,7 +76,7 @@ def root():
 
 @app.route("/api/health", methods=["GET"])
 def health():
-    return {"status": "ok", "step": 2}
+    return {"status": "ok", "step": 6, "service": "lexifeed-backend"}
 
 # Create database tables on first run
 with app.app_context():

@@ -56,6 +56,7 @@ numpy==2.4.4
 openai==2.32.0
 orjson==3.11.8
 ormsgpack==1.12.2
+faster-whisper==1.1.1
 packaging==26.1
 pandas==3.0.2
 pdfminer.six==20251230

@@ -10,7 +10,6 @@ LexiFeed AI Service — Resume-aware question generation, follow-up engine, and 
 import os
 import re
 import json
-from openai import OpenAI
 from dotenv import load_dotenv
 
 from services.interview_agent import (
@@ -22,11 +21,15 @@ from services.interview_agent import (
     parse_json_object,
     validate_questions,
 )
+from llm.provider_factory import get_provider
 
 load_dotenv()
 
-api_key = os.getenv("OPENAI_API_KEY")
-client = OpenAI(api_key=api_key) if api_key else None
+# NOTE: This service used to hardcode an OpenAI client that only worked with
+# OPENAI_API_KEY. That variable is never set in our .env (we use OpenRouter),
+# so every AI call was silently failing and falling back to static template
+# questions/answers. We now route through llm/provider_factory, which reads
+# AI_PROVIDER + OPENROUTER_API_KEY from .env (see backend/.env).
 
 
 # ─────────────────────────────────────────────
@@ -77,18 +80,18 @@ def extract_resume_text(filepath: str) -> str:
 # ─────────────────────────────────────────────
 
 def _chat(system: str, user: str, temperature: float = 0.7) -> str:
-    if not client:
-        raise RuntimeError("OPENAI_API_KEY missing")
+    """
+    Single choke point for every AI call in this service (questions,
+    follow-ups, feedback, reading passages, pronunciation analysis).
 
-    res = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        temperature=temperature,
-    )
-    return res.choices[0].message.content.strip()
+    Uses llm/provider_factory.get_provider(), which currently returns
+    OpenRouterProvider (AI_PROVIDER=openrouter in .env) using the free
+    model configured in AI_MODEL (meta-llama/llama-3.3-70b-instruct:free).
+    If OPENROUTER_API_KEY is missing, get_provider() raises immediately —
+    callers already catch exceptions and fall back gracefully.
+    """
+    provider = get_provider()
+    return provider.chat(system=system, user=user, temperature=temperature)
 
 
 # ─────────────────────────────────────────────

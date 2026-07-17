@@ -17,48 +17,81 @@ Why Whisper over Web Speech API:
   - No data sent to Google — stays within OpenAI/Anthropic ecosystem
 """
 
+"""
+LexiFeed Voice Service — Step 2
+
+Handles:
+  transcribe_audio()          → faster-whisper (local, free) → raw transcript
+  analyze_voice_answer()      → transcript + LLM analysis of BOTH
+                                 content AND delivery (filler words, pace,
+                                 confidence, structure, clarity)
+  generate_voice_followup()   → Voice-aware follow-up that references what
+                                 was actually said (not just inferred)
+
+Why faster-whisper instead of the OpenAI Whisper API:
+  - Runs entirely locally — no API key, no per-minute cost
+  - Same underlying Whisper model weights, so accuracy is essentially the
+    same as OpenAI's hosted Whisper API
+  - Model downloads once (first run only), then works fully offline
+  - Works in ALL browsers + mobile (we handle the raw audio blob server-side)
+"""
+
 import os
 import re
 import json
 import tempfile
 from pathlib import Path
-from openai import OpenAI
 from dotenv import load_dotenv
+from faster_whisper import WhisperModel
 from services.interview_agent import build_followup_prompt, fallback_followup, parse_json_object
+from llm.provider_factory import get_provider
 
 load_dotenv()
 
-api_key = os.getenv("OPENAI_API_KEY")
-client  = OpenAI(api_key=api_key) if api_key else None
+# Model size and device are configurable via .env so this can scale up to a
+# GPU later without touching code — just set WHISPER_DEVICE=cuda.
+WHISPER_MODEL_SIZE  = os.getenv("WHISPER_MODEL_SIZE", "small")
+WHISPER_DEVICE      = os.getenv("WHISPER_DEVICE", "cpu")
+# int8 on CPU is much faster with a small accuracy trade-off; float16 is the
+# right choice once running on an NVIDIA GPU (WHISPER_DEVICE=cuda).
+WHISPER_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8" if WHISPER_DEVICE == "cpu" else "float16")
+
+_whisper_model = None  # lazy-loaded singleton — loading the model is slow, transcribing isn't
+
+
+def _get_whisper_model() -> WhisperModel:
+    global _whisper_model
+    if _whisper_model is None:
+        print(f"[transcribe_audio] Loading faster-whisper model "
+              f"'{WHISPER_MODEL_SIZE}' on {WHISPER_DEVICE} ({WHISPER_COMPUTE_TYPE})...")
+        _whisper_model = WhisperModel(
+            WHISPER_MODEL_SIZE,
+            device=WHISPER_DEVICE,
+            compute_type=WHISPER_COMPUTE_TYPE,
+        )
+    return _whisper_model
+
 
 # Whisper supports these formats
 SUPPORTED_AUDIO_FORMATS = {".mp3", ".mp4", ".mpeg", ".mpga", ".m4a", ".wav", ".webm", ".ogg"}
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 1. Transcription via Whisper
+# 1. Transcription via local faster-whisper
 # ─────────────────────────────────────────────────────────────────────────────
 
 def transcribe_audio(audio_path: str, language: str = "en") -> dict:
     """
-    Send audio file to OpenAI Whisper and get back:
+    Transcribe a local audio file with faster-whisper and get back:
       {
         "transcript": "Full transcribed text",
-        "duration_seconds": 45.2,     ← estimated from word count
+        "duration_seconds": 45.2,
         "word_count": 112,
         "success": True
       }
 
-    Falls back gracefully if Whisper unavailable.
+    Falls back gracefully if transcription fails (corrupt file, unsupported
+    format, model load failure, etc).
     """
-    if not client:
-        return {
-            "transcript": "",
-            "duration_seconds": 0,
-            "word_count": 0,
-            "success": False,
-            "error": "OpenAI client not initialised.",
-        }
-
     ext = Path(audio_path).suffix.lower()
     if ext not in SUPPORTED_AUDIO_FORMATS:
         return {
@@ -70,34 +103,26 @@ def transcribe_audio(audio_path: str, language: str = "en") -> dict:
         }
 
     try:
-        with open(audio_path, "rb") as audio_file:
-            response = client.audio.transcriptions.create(
-                model    = "whisper-1",
-                file     = audio_file,
-                language = language,
-                # verbose_json gives us word timestamps (useful for pace analysis)
-                response_format = "verbose_json",
-            )
+        model = _get_whisper_model()
+        segments, info = model.transcribe(audio_path, language=language, beam_size=5)
 
-        transcript = response.text.strip()
-        # Whisper verbose_json exposes duration
-        duration   = getattr(response, "duration", None)
-        if duration is None:
-            # Estimate: avg speaking pace ~130 wpm
-            word_count = len(transcript.split())
-            duration   = round(word_count / 130 * 60, 1)
-        else:
-            word_count = len(transcript.split())
+        transcript = " ".join(segment.text.strip() for segment in segments).strip()
+        duration   = round(float(info.duration), 1) if getattr(info, "duration", None) else 0
+        word_count = len(transcript.split())
+
+        if not duration:
+            # Fallback estimate: avg speaking pace ~130 wpm
+            duration = round(word_count / 130 * 60, 1)
 
         return {
             "transcript":       transcript,
-            "duration_seconds": round(float(duration), 1),
+            "duration_seconds": duration,
             "word_count":       word_count,
             "success":          True,
         }
 
     except Exception as e:
-        print(f"[transcribe_audio] Whisper error: {e}")
+        print(f"[transcribe_audio] faster-whisper error: {e}")
         return {
             "transcript":       "",
             "duration_seconds": 0,
@@ -199,17 +224,8 @@ Return ONLY this JSON (no markdown fences, no extra keys):
 """
 
     try:
-        if not client:
-            raise RuntimeError("No OpenAI client")
-        response = client.chat.completions.create(
-            model       = "gpt-4o-mini",
-            messages    = [
-                {"role": "system", "content": system},
-                {"role": "user",   "content": user},
-            ],
-            temperature = 0.5,
-        )
-        raw  = response.choices[0].message.content.strip()
+        provider = get_provider()
+        raw = provider.chat(system=system, user=user, temperature=0.5)
         raw  = re.sub(r"```json|```", "", raw).strip()
         data = json.loads(raw)
         
@@ -238,100 +254,14 @@ Return ONLY this JSON (no markdown fences, no extra keys):
 # 3. Voice-aware follow-up generation
 # ─────────────────────────────────────────────────────────────────────────────
 
-def generate_voice_followup(
-    transcript:    str,
-    question:      str,
-    analysis:      dict,
-    company:       str,
-    role:          str,
-) -> dict:
-    """
-    Generate a follow-up question that specifically references what the
-    candidate ACTUALLY said (using their exact words/phrases where helpful)
-    and probes the most critical gap identified in the analysis.
-
-    Returns:
-    {
-      "followup": "...",
-      "probe_target": "what this follow-up is testing",
-      "quote_used": "the exact phrase from the transcript that triggered this follow-up"
-    }
-    """
-    if not transcript.strip():
-        return {
-            "followup": "Can you walk me through a specific example that illustrates your point?",
-            "probe_target": "specificity",
-            "quote_used": "",
-        }
-
-    gaps    = analysis.get("content_analysis", {}).get("key_gaps", [])
-    top_tip = analysis.get("top_tip", "")
-
-    system = (
-        "You are a sharp interviewer. Generate follow-up questions that feel "
-        "personal and incisive — referencing the candidate's actual words. "
-        "Return valid JSON only, no markdown fences."
-    )
-
-    user = f"""
-INTERVIEW CONTEXT:
-- Role: {role} at {company}
-- Original question: "{question}"
-
-CANDIDATE'S SPOKEN ANSWER (verbatim transcript):
-\"\"\"{transcript}\"\"\"
-
-KEY GAPS IDENTIFIED IN THEIR ANSWER:
-{chr(10).join(f"- {g}" for g in gaps) if gaps else "- Answer was vague in places"}
-
-COACHING NOTE: {top_tip}
-
-Task:
-1. Find the most important gap or vague/unsubstantiated claim in their answer.
-2. Quote the EXACT phrase from their transcript that was weakest (2–6 words).
-3. Write ONE follow-up question (1–2 sentences) that:
-   - References their actual words naturally (e.g., "You mentioned you 'led the migration'...")
-   - Probes specifically for what was missing
-   - Sounds like a real interviewer, not a chatbot
-
-Return ONLY this JSON:
-
-print(f"FOLLOWUP INPUT: {transcript[:100]}...")
-{{
-  "followup": "...",
-  "probe_target": "one phrase describing what this tests (e.g., 'ownership depth', 'quantifiable impact')",
-  "quote_used": "the 2-6 word phrase from transcript that triggered this follow-up"
-}}
-"""
-
-    try:
-        if not client:
-            raise RuntimeError("No client")
-        response = client.chat.completions.create(
-            model       = "gpt-4o-mini",
-            messages    = [
-                {"role": "system", "content": system},
-                {"role": "user",   "content": user},
-            ],
-            temperature = 0.65,
-        )
-        raw  = response.choices[0].message.content.strip()
-        raw  = re.sub(r"```json|```", "", raw).strip()
-        data = json.loads(raw)
-        if "followup" in data:
-            return data
-        raise ValueError("Missing followup key")
-    except Exception as e:
-        print(f"[generate_voice_followup] Error: {e}")
-        return {
-            "followup":    "Can you give me a concrete example with specific numbers or outcomes?",
-            "probe_target": "specificity and impact",
-            "quote_used":   "",
-        }
-
-
 # ─────────────────────────────────────────────────────────────────────────────
-# Helpers
+# 3. Voice-aware follow-up generation
+#
+# NOTE: this file used to define generate_voice_followup() TWICE. Python
+# silently uses only the last definition, so the first ~90-line version
+# (which also had a corrupted prompt with a stray print() statement embedded
+# inside the text sent to the LLM) was dead code and has been removed.
+# ─────────────────────────────────────────────────────────────────────────────
 # ─────────────────────────────────────────────────────────────────────────────
 
 def generate_voice_followup(
@@ -364,19 +294,10 @@ def generate_voice_followup(
     )
 
     try:
-        if not client:
-            raise RuntimeError("No client")
-        response = client.chat.completions.create(
-            model       = "gpt-4o-mini",
-            messages    = [
-                {"role": "system", "content": system},
-                {"role": "user",   "content": user},
-            ],
-            temperature = 0.75,
-        )
-        data = parse_json_object(response.choices[0].message.content.strip())
+        provider = get_provider()
+        raw = provider.chat(system=system, user=user, temperature=0.75)
+        data = parse_json_object(raw)
         if "followup" not in data:
-            print(f"FOLLOWUP OUTPUT: {data.get('followup')}")
             raise ValueError("Missing followup key")
         return {
             "followup": data["followup"],

@@ -10,29 +10,13 @@ This module provides sophisticated, context-aware analysis of interview answers 
 
 import json
 import re
-import os
-from openai import OpenAI
-from dotenv import load_dotenv
-
-load_dotenv()
-
-api_key = os.getenv("OPENAI_API_KEY")
-client = OpenAI(api_key=api_key) if api_key else None
+from llm.provider_factory import get_provider
 
 
 def _chat(system: str, user: str, temperature: float = 0.7) -> str:
-    """Thin wrapper around OpenAI chat completions."""
-    if not client:
-        raise RuntimeError("OpenAI client not initialised — check OPENAI_API_KEY.")
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        temperature=temperature,
-    )
-    return response.choices[0].message.content.strip()
+    """Thin wrapper around the configured provider (OpenRouter by default)."""
+    provider = get_provider()
+    return provider.chat(system=system, user=user, temperature=temperature)
 
 
 def analyze_answer_contextually(

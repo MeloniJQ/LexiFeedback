@@ -2,6 +2,7 @@ import hashlib
 import json
 import random
 import re
+import uuid
 from datetime import datetime, timezone
 
 
@@ -101,33 +102,71 @@ def build_interview_context(
 # -----------------------------
 # QUESTION GENERATION PROMPT
 # -----------------------------
-def build_question_generation_prompt(context: dict, num_questions: int = 5) -> tuple[str, str]:
+def build_question_generation_prompt(context: dict, num_questions: int = 10) -> tuple[str, str]:
 
     resume = context["resume_signals"]
     num_questions = max(1, min(num_questions, 20))
+    asked_questions = context.get("asked_questions") or []
+
+    # rough distribution across a realistic interview
+    n_technical = max(1, round(num_questions * 0.35))
+    n_resume = max(1, round(num_questions * 0.2))
+    n_situational = max(1, round(num_questions * 0.2))
+    n_culture = max(1, num_questions - 1 - n_technical - n_resume - n_situational)
 
     system = (
-        "You are an agentic interview designer. "
-        "Design structured interview questions with increasing difficulty."
+        "You are a senior technical interviewer with 10+ years of experience running real "
+        "interviews at top tech companies. You design realistic, professional mock interviews, "
+        "not generic internet question lists. Every question must sound like it came from an "
+        "interviewer who actually read this candidate's resume and this job description. "
+        "Return valid JSON only — no markdown fences, no commentary, no text outside the JSON."
     )
 
     user = f"""
-Create a mock interview:
+Design a complete mock interview of exactly {num_questions} questions for this candidate.
 
+CANDIDATE CONTEXT
 Company: {context['company']}
 Role: {context['role']}
-Questions: {num_questions}
+Key skills to probe: {json.dumps(context['key_skills'])}
+Job description signals: {json.dumps(context['job_description_signals'])}
+Resume signals: {json.dumps(resume)}
+Role-specific focus areas: {json.dumps(context['role_signals'])}
+Company culture signals: {json.dumps(context['company_signals'])}
+Combined focus areas: {json.dumps(context['focus_areas'])}
 
-Focus:
-{json.dumps(context["focus_areas"], indent=2)}
+QUESTIONS ALREADY ASKED IN THIS SESSION — do NOT repeat these or ask close variants of them:
+{json.dumps(asked_questions)}
 
-Resume:
-{json.dumps(resume, indent=2)}
+REQUIRED STRUCTURE (exactly {num_questions} questions total):
+1. Question 1 (type "behavioral"): an opening question — a natural, role-specific version of
+   "Tell me about yourself and why you're interested in this role at this company."
+2. {n_technical} questions (type "technical"): core fundamentals for this role AND questions
+   tied directly to the specific technologies named in the resume/job description. Not generic
+   textbook trivia — make them specific to this candidate's stack.
+3. {n_resume} questions (type "resume-specific"): dig into a specific project, achievement, or
+   technology mentioned in the resume signals above. Reference it concretely by name.
+4. {n_situational} questions (type "situational"): realistic on-the-job scenarios for this exact
+   role (e.g. "Imagine X happens in production/with a client/on your team — walk me through what
+   you'd do"). These must be scenario + ask-for-approach style, like a real interview.
+5. {n_culture} questions (type "culture-fit"): HR-style questions about motivation, values,
+   teamwork, or conflict, tied to the company's culture signals where possible. If this is the
+   last question, make it a natural closing question.
 
-Rules:
-1. First question must be intro.
-2. Increase difficulty gradually.
-3. Return JSON only.
+RULES
+- Every question must feel specific to THIS candidate/role/company — never interchangeable
+  templates.
+- Increase difficulty gradually across the set.
+- No two questions may test the same underlying thing.
+- Each question is 1-3 sentences, professional interviewer tone.
+- "hint" is a 1-sentence coaching tip on how to structure a strong answer (e.g. STAR method for
+  behavioral/situational, trade-off reasoning for technical).
+
+Return ONLY a JSON array in this exact shape, with ids 1..{num_questions} in interview order:
+[
+  {{"id": 1, "type": "behavioral", "question": "...", "hint": "..."}},
+  {{"id": 2, "type": "technical", "question": "...", "hint": "..."}}
+]
 """
     return system, user
 
@@ -135,7 +174,7 @@ Rules:
 # -----------------------------
 # VALIDATION
 # -----------------------------
-def validate_questions(raw_questions, context: dict, num_questions: int = 5) -> list[dict]:
+def validate_questions(raw_questions, context: dict, num_questions: int = 10) -> list[dict]:
 
     if not isinstance(raw_questions, list):
         raise ValueError("Question payload must be a list")
@@ -197,48 +236,96 @@ def validate_questions(raw_questions, context: dict, num_questions: int = 5) -> 
 # -----------------------------
 # FALLBACK QUESTIONS
 # -----------------------------
-def generate_fallback_questions(context: dict, count: int = 5) -> list[dict]:
-
-    rng = random.Random(context["session_seed"])
+def generate_fallback_questions(context: dict, count: int = 10) -> list[dict]:
+    """
+    Used ONLY when the live AI call itself fails (e.g. OpenRouter outage/timeout).
+    Seeded with a fresh random source every call (not a deterministic hash of
+    company+role+resume) so retries with the same inputs don't produce an
+    identical interview, and each category pool is large enough that a full
+    10-question fallback interview doesn't repeat itself.
+    """
+    rng = random.Random(uuid.uuid4().int)
     role = context["role"]
     company = context["company"]
-    resume = context["resume_signals"]
-    
-    count = max(1, min(count, 20))
-    questions = []
+    key_skills = context.get("key_skills") or []
+    top_skill = key_skills[0] if key_skills else "your core skills"
 
-    # Pool of fallback questions to avoid repetition
+    count = max(1, min(count, 20))
+
     fallback_pools = {
         "behavioral": [
             f"Tell me about a time you handled a difficult situation in a role like {role}.",
-            f"Describe a significant project you're proud of from your experience.",
-            "Tell me about a time you had to learn a new tool or technology quickly."
+            "Describe a significant project you're proud of from your experience.",
+            "Tell me about a time you had to learn a new tool or technology quickly.",
+            "Describe a time you disagreed with a teammate and how you resolved it.",
+            "Tell me about a mistake you made at work and what you learned from it.",
+            "Describe a time you had to work under a tight deadline.",
+            "Tell me about a time you took initiative without being asked.",
         ],
         "technical": [
             f"Explain a technical challenge you encountered while working as a {role}.",
             "How do you ensure code quality and maintainability in your projects?",
-            "Can you walk me through your process for debugging a complex issue?"
+            "Can you walk me through your process for debugging a complex issue?",
+            f"How would you design a system that needs to scale, using {top_skill}?",
+            "What trade-offs do you consider when choosing a database for a new project?",
+            "How do you approach writing tests for a feature you're building?",
+            "Walk me through how you'd optimize a slow-performing piece of code.",
+        ],
+        "resume-specific": [
+            "Pick one project from your resume — what was the hardest technical decision you made on it?",
+            "What was your specific individual contribution on the project you'd call your biggest achievement?",
+            "One of your listed skills stands out to me — tell me about a real situation where you used it.",
+            "What would you do differently if you rebuilt the project on your resume today?",
         ],
         "situational": [
             "How would you handle a situation where a project deadline is at risk?",
-            "What would you do if you disagreed with a technical decision made by your team?",
-            "How do you prioritize tasks when you have multiple urgent requests?"
+            "What would you do if you disagreed with a technical decision made by your team lead?",
+            "How do you prioritize tasks when you have multiple urgent requests at once?",
+            "Imagine a critical bug is found in production right before a release — walk me through what you'd do.",
+            "A stakeholder asks for a feature that conflicts with best practice — how do you handle that conversation?",
+            "You inherit a codebase with no documentation and a tight deadline — what's your approach?",
         ],
         "culture-fit": [
             f"What values are you looking for in your next team at {company}?",
             "How do you give and receive constructive feedback?",
-            "What motivates you to do your best work?"
-        ]
+            "What motivates you to do your best work?",
+            f"Why {company} specifically, and why this {role} role?",
+            "Do you have any questions for us before we wrap up?",
+        ],
     }
+
+    # Mirror the same realistic category distribution used in the AI prompt
+    n_technical = max(1, round(count * 0.35))
+    n_resume = max(1, round(count * 0.2))
+    n_situational = max(1, round(count * 0.2))
+    n_culture = max(1, count - 1 - n_technical - n_resume - n_situational)
+    sequence = (
+        ["behavioral"]
+        + ["technical"] * n_technical
+        + ["resume-specific"] * n_resume
+        + ["situational"] * n_situational
+        + ["culture-fit"] * n_culture
+    )[:count]
+    while len(sequence) < count:
+        sequence.append(rng.choice(QUESTION_TYPES))
+    rng.shuffle(sequence[1:])  # keep index 0 as the intro question, mix the rest
+
+    questions = []
+    used_per_category: dict[str, set] = {}
 
     for i in range(count):
         if i == 0:
             q = f"To start, could you tell me a bit about yourself and your interest in the {role} role at {company}?"
             qtype = "behavioral"
         else:
-            qtype = QUESTION_TYPES[i % len(QUESTION_TYPES)]
-            pool = fallback_pools.get(qtype, fallback_pools["behavioral"])
-            q = rng.choice(pool)
+            qtype = sequence[i]
+            pool = list(fallback_pools.get(qtype, fallback_pools["behavioral"]))
+            rng.shuffle(pool)
+            used = used_per_category.setdefault(qtype, set())
+            q = next((p for p in pool if p not in used), None)
+            if q is None:
+                q = rng.choice(pool)  # pool exhausted (rare) — reuse rather than crash
+            used.add(q)
 
         questions.append({
             "id": i + 1,
@@ -355,7 +442,14 @@ def _question_key(q: str):
 
 
 def _default_hint(qtype: str, context: dict):
-    return f"Answer using clear structured reasoning for {qtype}."
+    hints = {
+        "behavioral": "Use the STAR method: Situation, Task, Action, Result.",
+        "situational": "Use the STAR method and be concrete about the exact steps you'd take.",
+        "technical": "Explain your reasoning and trade-offs, not just the final answer.",
+        "resume-specific": "Be concrete — name the project, your specific role, and the outcome.",
+        "culture-fit": "Be authentic and back your answer with a real example.",
+    }
+    return hints.get(qtype, f"Answer using clear, structured reasoning for a {qtype} question.")
 
 
 # FIXED JSON PARSER
@@ -366,9 +460,15 @@ def parse_json_object(raw: str):
     except:
         return []
 def fallback_followup(original_question: str, candidate_answer: str, company: str, role: str) -> dict:
+    pool = [
+        "That's helpful context. Can you elaborate specifically on your individual contribution and the final outcome?",
+        "Can you walk me through a concrete example with specific numbers or measurable outcomes?",
+        "What was the hardest part of that, and how did you specifically get through it?",
+        "Can you go one level deeper on the technical approach you took there?",
+    ]
     return {
-        "followup": "That's helpful context. Can you elaborate specifically on your individual contribution and the final outcome of that situation?",
-        "reason": "Fallback due to missing AI response.",
+        "followup": random.choice(pool),
+        "reason": "Fallback due to missing/failed AI response.",
         "probe_target": "depth and ownership",
         "quote_used": ""
     }
