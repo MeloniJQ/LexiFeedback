@@ -25,7 +25,7 @@ export const API_URL = getApiUrl()
 
 // ─── Core fetch wrapper ───────────────────────────────────────────────────────
 
-async function apiCall(url: string, options: RequestInit = {}) {
+ export async function apiCall(url: string, options: RequestInit = {}) {
   const token = getToken()
   const headers = {
     'Content-Type': 'application/json',
@@ -157,4 +157,122 @@ export async function getPracticeSessions(session_type?: string) {
 
 export async function getPracticeStats() {
   return apiCall(`${API_URL}/interview/stats`, { method: 'GET' })
+}
+
+// ─── Goals ────────────────────────────────────────────────────────────────
+
+export type GoalType =
+  | 'Interview Practice'
+  | 'Presentation Mode'
+  | 'Casual Conversation'
+  | 'Reading Practice'
+
+export type GoalStatus = 'active' | 'completed' | 'overdue' | 'paused'
+
+export interface Goal {
+  id: number
+  userId: number
+  title: string
+  description: string
+  goalType: GoalType
+  targetValue: number
+  currentProgress: number
+  deadline: string // ISO YYYY-MM-DD
+  createdAt: string
+  updatedAt: string
+  streakCount: number
+  longestStreak: number
+  lastCompletedDate: string | null
+  completed: boolean
+  status: GoalStatus
+  daysRemaining: number | null
+  progressPercentage: number
+}
+
+export interface GoalStats {
+  totalGoals: number
+  completedGoals: number
+  currentStreak: number
+  longestStreak: number
+  averageProgress: number
+  activeGoals: number
+}
+
+export interface CreateGoalPayload {
+  title: string
+  description?: string
+  goalType: GoalType
+  targetValue: number
+  deadline: string // YYYY-MM-DD
+}
+
+export interface UpdateGoalPayload {
+  title?: string
+  description?: string
+  goalType?: GoalType
+  targetValue?: number
+  deadline?: string
+  status?: 'active' | 'paused'
+}
+
+export class GoalValidationError extends Error {
+  errors: Record<string, string>
+  constructor(errors: Record<string, string>) {
+    super('Validation failed')
+    this.errors = errors
+  }
+}
+
+async function goalsApiCall(url: string, options: RequestInit = {}) {
+  const token = getToken()
+  const headers = {
+    'Content-Type': 'application/json',
+    ...options.headers,
+  } as Record<string, string>
+  if (token) headers.Authorization = `Bearer ${token}`
+
+  const response = await fetch(url, { ...options, headers })
+  const data = await response.json().catch(() => ({}))
+
+  if (!response.ok) {
+    if (data?.errors) throw new GoalValidationError(data.errors)
+    throw new Error(data?.error ?? `API error: ${response.status}`)
+  }
+  return data
+}
+
+export async function getGoals(): Promise<Goal[]> {
+  return goalsApiCall(`${API_URL}/goals`, { method: 'GET' })
+}
+
+export async function getGoalStats(): Promise<GoalStats> {
+  return goalsApiCall(`${API_URL}/goals/stats`, { method: 'GET' })
+}
+
+export async function createGoal(payload: CreateGoalPayload): Promise<{ goal: Goal }> {
+  return goalsApiCall(`${API_URL}/goals`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function updateGoal(id: number, payload: UpdateGoalPayload): Promise<{ goal: Goal }> {
+  return goalsApiCall(`${API_URL}/goals/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function deleteGoal(id: number): Promise<{ message: string }> {
+  return goalsApiCall(`${API_URL}/goals/${id}`, { method: 'DELETE' })
+}
+
+export async function updateGoalProgress(
+  id: number,
+  body: { mode: 'increment'; amount: number } | { mode: 'set'; value: number }
+): Promise<{ goal: Goal; justCompleted: boolean; streakIncreased: boolean }> {
+  return goalsApiCall(`${API_URL}/goals/${id}/progress`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
 }

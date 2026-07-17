@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Sidebar } from '@/components/layout/sidebar'
 import { Header } from '@/components/layout/header'
 import { getToken } from '@/lib/auth'
+import { WordOfDayModal } from '@/components/word-of-day-modal'
 
 export default function DashboardLayout({
   children,
@@ -36,6 +37,7 @@ export default function DashboardLayout({
           {children}
         </main>
       </div>
+      <WordOfDayModal />
     </div>
   )
 }
