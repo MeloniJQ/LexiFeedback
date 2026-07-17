@@ -17,12 +17,16 @@ def build_interview_plan_payload(
     jd_data: dict[str, Any] | None = None,
     match_data: dict[str, Any] | None = None,
     candidate_name: str | None = None,
+    company: str | None = None,
+    role: str | None = None,
 ) -> dict[str, Any]:
     return build_interview_plan(
         candidate_name=candidate_name,
         resume_data=resume_data or {},
         jd_data=jd_data or {},
         match_data=match_data or {},
+        company=company,
+        role=role,
     )
 
 

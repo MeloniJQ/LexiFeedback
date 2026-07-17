@@ -22,6 +22,12 @@ QUESTION_CATEGORIES = [
 ]
 
 QUESTION_DIFFICULTIES = ["Easy", "Medium", "Hard"]
+DIFFICULTY_RANK = {"Easy": 0, "Medium": 1, "Hard": 2}
+
+# Generation is a single call, but the free-tier OpenRouter model can be slow
+# under load — cap it so a stuck request falls back to local questions
+# instead of leaving the user staring at a spinner indefinitely.
+GENERATION_TIMEOUT_SECONDS = 25
 
 
 def generate_questions_from_blueprint(
@@ -31,15 +37,20 @@ def generate_questions_from_blueprint(
     mode: str | None = None,
     round_type: str | None = None,
 ) -> list[dict[str, Any]]:
+    role = blueprint.get("role") or ""
+    company = blueprint.get("company") or ""
+
     provider = get_provider()
     system, user = build_question_generation_prompt(
         candidate_profile=candidate_profile,
         blueprint=blueprint,
         count=count,
+        company=company,
+        role=role,
     )
 
     try:
-        raw = provider.chat(system=system, user=user, temperature=0.8)
+        raw = provider.chat(system=system, user=user, temperature=0.8, timeout=GENERATION_TIMEOUT_SECONDS)
         questions = _parse_question_set(raw)
         if not questions:
             raise ValueError("Empty question set")
@@ -47,12 +58,13 @@ def generate_questions_from_blueprint(
         if mode or round_type:
             for question in questions:
                 question.setdefault("metadata", {})
-                question["metadata"]["mode"] = mode or "General Software Engineer"
+                question["metadata"]["mode"] = mode or role or "General"
                 question["metadata"]["round_type"] = round_type or "Technical Round"
         return questions
     except Exception as exc:
         print(f"[question_generator] Error: {exc}")
-        return _fallback_questions(candidate_profile, blueprint, count)
+        fallback = _fallback_questions(candidate_profile, blueprint, count)
+        return _apply_opener_and_difficulty_ramp(fallback, blueprint)
 
 
 def _parse_question_set(raw: str) -> list[dict[str, Any]]:
@@ -69,6 +81,29 @@ def _parse_question_set(raw: str) -> list[dict[str, Any]]:
             except json.JSONDecodeError:
                 return []
     return []
+
+
+def _build_opener_question(role: str, company: str) -> dict[str, Any]:
+    """
+    The first question of every interview is always a warm, open-ended
+    "tell me about yourself" style opener — generated locally (not by the
+    LLM) so it's guaranteed regardless of model compliance, and tailored
+    with the real role/company instead of being generic.
+    """
+    role_label = role or "this role"
+    company_label = f" at {company}" if company else ""
+    return {
+        "question_id": str(uuid.uuid4()),
+        "question_text": f"To start, could you tell me a bit about yourself and what draws you to the {role_label} role{company_label}?",
+        "category": "Behavioral",
+        "topic": "Introduction",
+        "difficulty": "Easy",
+        "expected_skills": [],
+        "estimated_duration": "3 minutes",
+        "expected_keywords": [],
+        "project": "",
+        "metadata": {"opener": True},
+    }
 
 
 def _normalize_questions(raw: list[dict[str, Any]], count: int, blueprint: dict[str, Any], candidate_profile: CandidateProfile) -> list[dict[str, Any]]:
@@ -108,7 +143,30 @@ def _normalize_questions(raw: list[dict[str, Any]], count: int, blueprint: dict[
     if len(normalized) < count:
         normalized.extend(_fallback_questions(candidate_profile, blueprint, count - len(normalized)))
 
-    return normalized[:count]
+    normalized = normalized[:count]
+    return _apply_opener_and_difficulty_ramp(normalized, blueprint)
+
+
+def _apply_opener_and_difficulty_ramp(questions: list[dict[str, Any]], blueprint: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    Guarantees, in code (not just via prompt instructions the model might
+    ignore):
+      1. Question 1 is always the "tell me about yourself" opener.
+      2. The remaining questions ramp from Easy -> Medium -> Hard, instead
+         of whatever order the model happened to return them in.
+    """
+    if not questions:
+        return questions
+
+    role = blueprint.get("role") or "" if isinstance(blueprint, dict) else ""
+    company = blueprint.get("company") or "" if isinstance(blueprint, dict) else ""
+
+    opener = _build_opener_question(role, company)
+    rest = sorted(
+        questions[1:],
+        key=lambda q: DIFFICULTY_RANK.get(q.get("difficulty"), 1),
+    )
+    return [opener] + rest
 
 
 def _fallback_questions(candidate_profile: CandidateProfile, blueprint: dict[str, Any], count: int) -> list[dict[str, Any]]:
@@ -120,20 +178,23 @@ def _fallback_questions(candidate_profile: CandidateProfile, blueprint: dict[str
     a pool spanning multiple QUESTION_CATEGORIES (technical, scenario, HR,
     behavioral, etc.), shuffled per call so repeated fallbacks aren't identical.
     """
+    role = blueprint.get("role") or "" if isinstance(blueprint, dict) else ""
     topic = blueprint.get("domain_summary") or candidate_profile.profile_data.get("job_description", {}).get("preferred_domain", ["General"])[0]
     base_project = blueprint.get("title") or "Candidate Interview"
 
+    # (category, question text, difficulty) — tagged so the ramp below can
+    # order easy -> hard even in the local fallback pool.
     pool = [
-        ("Project", f"Describe a project from your experience that best demonstrates your ability to work with {topic}."),
-        ("Core Technical", f"What are the core technical concepts in {topic} that you rely on most day-to-day?"),
-        ("Programming", "Walk me through how you'd debug a piece of code that's producing incorrect output intermittently."),
-        ("Database", "How do you decide between normalizing and denormalizing a database schema for a new feature?"),
-        ("Framework", f"What trade-offs have you run into while working with the tools or frameworks on your resume related to {topic}?"),
-        ("Behavioral", "Tell me about a time you disagreed with a technical decision on your team — how did you handle it?"),
-        ("Scenario", "Imagine a critical bug is discovered in production right before a major release — walk me through what you'd do."),
-        ("Problem Solving", "How would you approach a problem you've never seen before, with no clear reference material?"),
-        ("System Design", f"How would you design a system that needs to scale reliably around {topic}?"),
-        ("HR", "What are you looking for in your next role, and why does this one fit?"),
+        ("Behavioral", "Tell me about a time you disagreed with a technical decision on your team — how did you handle it?", "Easy"),
+        ("HR", "What are you looking for in your next role, and why does this one fit?", "Easy"),
+        ("Project", f"Describe a project from your experience that best demonstrates your ability to work with {topic}.", "Medium"),
+        ("Core Technical", f"What are the core technical concepts in {topic} that you rely on most day-to-day?", "Medium"),
+        ("Framework", f"What trade-offs have you run into while working with the tools or frameworks on your resume related to {topic}?", "Medium"),
+        ("Programming", "Walk me through how you'd debug a piece of code that's producing incorrect output intermittently.", "Medium"),
+        ("Database", "How do you decide between normalizing and denormalizing a database schema for a new feature?", "Hard"),
+        ("Problem Solving", "How would you approach a problem you've never seen before, with no clear reference material?", "Hard"),
+        ("Scenario", "Imagine a critical bug is discovered in production right before a major release — walk me through what you'd do.", "Hard"),
+        ("System Design", f"How would you design a system that needs to scale reliably around {topic}?", "Hard"),
     ]
 
     rng = random.Random(uuid.uuid4().int)
@@ -141,18 +202,18 @@ def _fallback_questions(candidate_profile: CandidateProfile, blueprint: dict[str
 
     questions = []
     for i in range(count):
-        category, text = pool[i % len(pool)]
+        category, text, difficulty = pool[i % len(pool)]
         questions.append({
             "question_id": str(uuid.uuid4()),
             "question_text": text,
             "category": category,
             "topic": topic,
-            "difficulty": "Medium",
+            "difficulty": difficulty,
             "expected_skills": [topic],
             "estimated_duration": "5 minutes",
             "expected_keywords": [topic],
             "project": base_project,
-            "metadata": {"fallback": True, "mode": "General Software Engineer", "round_type": "Technical Round"},
+            "metadata": {"fallback": True, "mode": role or "General", "round_type": "Technical Round"},
         })
     return questions
 

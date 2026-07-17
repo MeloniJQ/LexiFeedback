@@ -98,13 +98,22 @@ interface FollowupData {
   quote_used: string
 }
 
+interface FollowupRound {
+  data: FollowupData
+  transcript: string
+}
+
 interface QAPair {
   question: Question
   transcript: string
   analysis: VoiceAnalysis
-  followup: FollowupData
-  followupTranscript?: string
+  followups: FollowupRound[]
 }
+
+// Cap on how many follow-up rounds can be chained on a single question —
+// each round is a full record -> transcribe -> generate cycle, so an
+// unbounded chain would make the interview drag on indefinitely.
+const MAX_FOLLOWUP_ROUNDS = 3
 
 type Stage =
   | 'setup'
@@ -158,7 +167,12 @@ export default function InterviewPracticePage() {
   const [pairs, setPairs]             = useState<QAPair[]>([])
   const [transcript, setTranscript]   = useState('')       // editable after transcribe
   const [currentAnalysis, setCurrentAnalysis] = useState<VoiceAnalysis | null>(null)
+  // currentFollowup is whichever follow-up round is currently being shown/answered.
+  // followupChain accumulates COMPLETED rounds for the current main question, so
+  // each new follow-up call can be told what's already been asked/answered.
   const [currentFollowup, setCurrentFollowup] = useState<FollowupData | null>(null)
+  const [followupChain, setFollowupChain] = useState<FollowupRound[]>([])
+  const [generatingNextFollowup, setGeneratingNextFollowup] = useState(false)
   // Agentic layer: agenticAnalyses accumulates across the whole session and is
   // sent back as "memory" (previous_analyses) on every subsequent call, so the
   // AI's evaluation of question 5 is informed by how you answered 1-4.
@@ -218,8 +232,13 @@ export default function InterviewPracticePage() {
       }
 
       // Generate the interview plan (was the separate "Generate Interview Plan" button)
+      // Send company/role explicitly — the plan otherwise has no way to know
+      // what the user is actually interviewing for, and every question
+      // generated downstream depends on this.
       const planRes = await fetch(`${API}/interview/plan/generate`, {
-        method: 'POST', headers: { Authorization: `Bearer ${token}` },
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company: setup.company, role: setup.role }),
       })
       const planData = await planRes.json()
       if (!planRes.ok) throw new Error(planData.error || 'Interview plan generation failed')
@@ -385,12 +404,12 @@ export default function InterviewPracticePage() {
   const handleSubmitFollowup = () => {
     if (!currentAnalysis || !currentFollowup) return
 
+    const finalRound: FollowupRound = { data: currentFollowup, transcript: followupTranscript || '(skipped)' }
     const pair: QAPair = {
-      question:           currentQ,
-      transcript:         transcript,
-      analysis:           currentAnalysis,
-      followup:           currentFollowup,
-      followupTranscript: followupTranscript || '(skipped)',
+      question:   currentQ,
+      transcript: transcript,
+      analysis:   currentAnalysis,
+      followups:  [...followupChain, finalRound],
     }
     setPairs(prev => [...prev, pair])
 
@@ -400,6 +419,7 @@ export default function InterviewPracticePage() {
     setCurrentFollowup(null)
     setCurrentAgentic(null)
     setFollowupTranscript('')
+    setFollowupChain([])
     recorder.resetRecording()
     followupRecorder.resetRecording()
 
@@ -408,6 +428,39 @@ export default function InterviewPracticePage() {
       setStage('answering')
     } else {
       setStage('done')
+    }
+  }
+
+  // ── Ask another follow-up round instead of advancing ──────────────────────
+  const handleAskAnotherFollowup = async () => {
+    if (!currentFollowup) return
+
+    const completedRound: FollowupRound = { data: currentFollowup, transcript: followupTranscript || '(skipped)' }
+    const newChain = [...followupChain, completedRound]
+    setFollowupChain(newChain)
+    setError('')
+    setGeneratingNextFollowup(true)
+    try {
+      const fu: FollowupData = await authFetch(`${API}/voice/followup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transcript: completedRound.transcript,
+          question:   completedRound.data.followup,
+          analysis:   currentAnalysis,
+          company:    setup.company,
+          role:       setup.role,
+          previous_followups: newChain.map(r => ({ followup: r.data.followup, answer: r.transcript })),
+        }),
+      })
+      setCurrentFollowup(fu)
+      setFollowupTranscript('')
+      followupRecorder.resetRecording()
+      setStage('followup')
+    } catch (e: any) {
+      setError(e.message)
+    } finally {
+      setGeneratingNextFollowup(false)
     }
   }
 
@@ -439,9 +492,11 @@ export default function InterviewPracticePage() {
     try {
       const fullTranscript = pairs.map((p, i) => {
         let b = `Q${i + 1} [${p.question.type}]: ${p.question.question}\n`
-        b += `A: ${p.transcript}\n`
-        b += `Follow-up: ${p.followup.followup}\n`
-        b += `A: ${p.followupTranscript ?? '(skipped)'}`
+        b += `A: ${p.transcript}`
+        p.followups.forEach((round, j) => {
+          b += `\nFollow-up ${j + 1}: ${round.data.followup}\n`
+          b += `A: ${round.transcript}`
+        })
         return b
       }).join('\n\n---\n\n')
 
@@ -473,6 +528,7 @@ export default function InterviewPracticePage() {
     setTranscript('')
     setCurrentAnalysis(null)
     setCurrentFollowup(null)
+    setFollowupChain([])
     setCurrentAgentic(null)
     setAgenticAnalyses([])
     setSessionComparison(null)
@@ -773,7 +829,9 @@ export default function InterviewPracticePage() {
               <div className="flex items-start gap-3">
                 <MessageSquare className="w-5 h-5 text-indigo-500 mt-0.5 shrink-0" />
                 <div>
-                  <p className="text-xs uppercase tracking-widest text-indigo-500 mb-1">AI Follow-up</p>
+                  <p className="text-xs uppercase tracking-widest text-indigo-500 mb-1">
+                    AI Follow-up {followupChain.length > 0 && `(round ${followupChain.length + 1} of up to ${MAX_FOLLOWUP_ROUNDS})`}
+                  </p>
                   <p className="text-lg font-semibold text-[#1F2937] dark:text-white">
                     {currentFollowup.followup}
                   </p>
@@ -785,7 +843,9 @@ export default function InterviewPracticePage() {
                 </div>
               </div>
 
-              {stage === 'transcribing_followup' ? (
+              {generatingNextFollowup ? (
+                <LoadingCard message="Preparing the next follow-up…" sub="" />
+              ) : stage === 'transcribing_followup' ? (
                 <LoadingCard message="Transcribing follow-up answer…" sub="" />
               ) : (
                 <>
@@ -802,7 +862,7 @@ export default function InterviewPracticePage() {
                     </div>
                   )}
 
-                  <div className="flex gap-3">
+                  <div className="flex flex-wrap gap-3">
                     <Button
                       className="flex-1"
                       onClick={handleSubmitFollowup}
@@ -810,6 +870,16 @@ export default function InterviewPracticePage() {
                     >
                       {currentIdx + 1 < questions.length ? 'Next Question →' : 'Finish Interview'}
                     </Button>
+                    {followupChain.length + 1 < MAX_FOLLOWUP_ROUNDS && (
+                      <Button
+                        variant="outline"
+                        className="gap-2"
+                        onClick={handleAskAnotherFollowup}
+                        disabled={!followupTranscript && !followupRecorder.audioBlob}
+                      >
+                        <MessageSquare className="w-4 h-4" /> Ask Another Follow-up
+                      </Button>
+                    )}
                     <Button variant="ghost" onClick={handleSubmitFollowup} className="text-sm">
                       Skip
                     </Button>

@@ -341,17 +341,28 @@ def generate_fallback_questions(context: dict, count: int = 10) -> list[dict]:
 # FOLLOWUP PROMPT
 # -----------------------------
 def build_followup_prompt(
-    original_question: str, 
-    candidate_answer: str, 
-    previous_pairs=None, 
-    resume_context="", 
-    company: str = "", 
+    original_question: str,
+    candidate_answer: str,
+    previous_pairs=None,
+    resume_context="",
+    company: str = "",
     role: str = ""
 ):
     system = (
         "You are an expert interviewer. Your task is to generate a single, sharp follow-up "
         "question based on the candidate's answer. Your response must be in valid JSON format."
     )
+
+    prior_rounds_block = ""
+    if previous_pairs:
+        prior_rounds_block = "\n\nPREVIOUS FOLLOW-UP ROUNDS ON THIS SAME QUESTION (do not repeat these — probe a NEW angle, or focus on a detail not yet covered):\n"
+        for i, pair in enumerate(previous_pairs, 1):
+            prior_question = pair.get("followup") or pair.get("question", "")
+            prior_answer = pair.get("answer", "")
+            prior_rounds_block += f"\nFollow-up {i}: {prior_question}\nCandidate's answer: {prior_answer}\n"
+
+    avoid_repeat_clause = " that has not already been covered above" if previous_pairs else ""
+
     user = f"""
 INTERVIEW CONTEXT:
 - Role: {role}
@@ -359,9 +370,10 @@ INTERVIEW CONTEXT:
 
 ORIGINAL QUESTION: "{original_question}"
 CANDIDATE ANSWER: \"\"\"{candidate_answer}\"\"\"
+{prior_rounds_block}
 
 Task:
-Generate ONE sharp, incisive follow-up question that probes for more detail.
+Generate ONE sharp, incisive follow-up question that probes for more detail{avoid_repeat_clause}.
 Return valid JSON only:
 {{
   "followup": "the follow-up question text",

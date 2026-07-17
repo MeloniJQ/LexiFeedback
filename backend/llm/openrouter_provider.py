@@ -27,7 +27,13 @@ class OpenRouterProvider(BaseLLMProvider):
          template content.
     """
 
-    MAX_RETRIES = 2
+    # Kept small on purpose: every retry blocks the user's request. One retry
+    # with a short capped backoff clears most transient 429s; anything beyond
+    # that should fall back to local/template content rather than keep the
+    # UI spinning.
+    MAX_RETRIES = 1
+    DEFAULT_TIMEOUT_SECONDS = 20
+    MAX_BACKOFF_SECONDS = 5
 
     def __init__(self) -> None:
         api_key = os.getenv("OPENROUTER_API_KEY")
@@ -41,6 +47,10 @@ class OpenRouterProvider(BaseLLMProvider):
         self.model = os.getenv("AI_MODEL", "openrouter/free")
 
     def chat(self, system: str, user: str, temperature: float = 0.7, timeout: int | None = None) -> str:
+        # Bound every call, even callers that don't pass a timeout — an
+        # unbounded request-timeout is the difference between "slow" and
+        # "the UI hangs until the OS socket times out."
+        timeout = timeout or self.DEFAULT_TIMEOUT_SECONDS
         last_error = None
         for attempt in range(self.MAX_RETRIES + 1):
             try:
@@ -62,7 +72,7 @@ class OpenRouterProvider(BaseLLMProvider):
                 # Cap the wait so a single slow request doesn't hang the
                 # user's browser for too long — a capped wait + moving on to
                 # a fallback beats a long silent hang.
-                wait = min(wait, 12)
+                wait = min(wait, self.MAX_BACKOFF_SECONDS)
                 print(f"[OpenRouterProvider] 429 rate-limited, retrying in {wait}s "
                       f"(attempt {attempt + 1}/{self.MAX_RETRIES})...")
                 time.sleep(wait)

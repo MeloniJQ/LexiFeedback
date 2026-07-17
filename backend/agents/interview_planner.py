@@ -25,6 +25,8 @@ def build_interview_plan(
     match_data: dict[str, Any] | None = None,
     mode: str | None = None,
     round_type: str | None = None,
+    company: str | None = None,
+    role: str | None = None,
 ) -> dict[str, Any]:
     resume_data = resume_data or {}
     jd_data = jd_data or {}
@@ -42,10 +44,23 @@ def build_interview_plan(
     strengths = matching_skills or _normalize_list(top_resume_skills + top_frameworks + top_tools)
     gaps = missing_skills or [skill for skill in required_skills if skill not in strengths]
 
-    plan_title = f"Interview plan for {candidate_name}" if candidate_name else "Interview plan"
-    role_summary = jd_data.get("preferred_experience") or "Target role preparation"
+    role = (role or "").strip()
+    company = (company or "").strip()
+
+    if role and company:
+        plan_title = f"Interview plan for {role} at {company}"
+    elif candidate_name:
+        plan_title = f"Interview plan for {candidate_name}"
+    else:
+        plan_title = "Interview plan"
+
+    role_summary = role or jd_data.get("preferred_experience") or "Target role preparation"
     domain_summary = ", ".join(preferred_domain) if preferred_domain else "general technical and behavioral readiness"
-    mode_label = (mode or "General Software Engineer").strip()
+    # `mode`/`round_type` are only ever passed explicitly by a caller that wants to
+    # override the interview style; when absent, fall back to the real role/company
+    # instead of a hardcoded example so the blueprint never leaks a fake job title
+    # into the question-generation prompt.
+    mode_label = (mode or role or "General").strip()
     round_label = (round_type or "Technical Round").strip()
 
     focus_areas = []
@@ -100,6 +115,8 @@ def build_interview_plan(
 
     return {
         "title": plan_title,
+        "company": company,
+        "role": role,
         "role_summary": role_summary,
         "domain_summary": domain_summary,
         "mode": mode_label,

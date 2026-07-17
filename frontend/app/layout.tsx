@@ -1,4 +1,5 @@
 import { ThemeProvider } from '@/components/theme-provider'
+import { Toaster } from '@/components/ui/sonner'
 import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
 import { Geist } from 'next/font/google'
@@ -33,23 +34,10 @@ export default function RootLayout({
       <body className={`${geist.className} font-sans antialiased bg-white dark:bg-black text-[#1F2937] dark:text-white`}>
         <ThemeProvider>
           {children}
+          <Toaster richColors closeButton position="top-right" />
         </ThemeProvider>
         {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>
     </html>
   )
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-

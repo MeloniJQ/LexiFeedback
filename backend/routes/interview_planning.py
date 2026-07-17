@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
 
 from models import CandidateProfile, JobDescriptionData, ResumeData
 from services.candidate_profile import get_latest_candidate_profile
@@ -19,6 +19,10 @@ def generate_interview_plan(payload):
     profile = get_latest_candidate_profile(payload["user_id"])
     if not profile:
         return jsonify({"error": "No candidate profile is available for planning."}), 404
+
+    data = request.get_json(silent=True) or {}
+    company = (data.get("company") or "").strip()
+    role = (data.get("role") or "").strip()
 
     resume_data = {}
     jd_data = {}
@@ -47,6 +51,8 @@ def generate_interview_plan(payload):
         resume_data=resume_data,
         jd_data=jd_data,
         match_data=match_data,
+        company=company,
+        role=role,
     )
     plan_record = create_or_update_interview_plan(profile, plan_payload)
 
