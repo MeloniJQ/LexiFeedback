@@ -86,7 +86,7 @@ def start_interview(payload):
       role             (required)
       job_description  (optional)
       key_skills       (optional)
-      num_questions    (optional, default 5, max 20)
+      num_questions    (optional, default 10, max 20)
       resume           (optional file — PDF / DOCX / TXT)
 
     Returns:
@@ -100,7 +100,7 @@ def start_interview(payload):
             job_description = (request.form.get("job_description") or "").strip()
             key_skills      = (request.form.get("key_skills")      or "").strip()
             asked_questions = _json_list(request.form.get("asked_questions"))
-            num_questions   = int(request.form.get("num_questions", 5))
+            num_questions   = int(request.form.get("num_questions", 10))
             resume_file     = request.files.get("resume")
         else:
             data            = request.json or {}
@@ -109,7 +109,7 @@ def start_interview(payload):
             job_description = (data.get("job_description") or "").strip()
             key_skills      = (data.get("key_skills")      or "").strip()
             asked_questions = _json_list(data.get("asked_questions"))
-            num_questions   = int(data.get("num_questions", 5))
+            num_questions   = int(data.get("num_questions", 10))
             resume_file     = None
 
         if not company or not role:

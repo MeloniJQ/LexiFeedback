@@ -286,7 +286,11 @@ def voice_followup(payload):
       "question":   "Original question",
       "analysis":   { ...full analysis object from /analyze... },
       "company":    "Google",
-      "role":       "Software Engineer"
+      "role":       "Software Engineer",
+      "previous_followups": [                 (optional — for chaining multiple follow-up rounds)
+        { "followup": "...", "answer": "..." },
+        ...
+      ]
     }
 
     Response:
@@ -303,16 +307,18 @@ def voice_followup(payload):
         analysis   = data.get("analysis",    {})
         company    = (data.get("company")    or "the company").strip()
         role       = (data.get("role")       or "this role").strip()
+        previous_followups = data.get("previous_followups") or []
 
         if not transcript:
             return jsonify({"error": "transcript is required"}), 400
 
         result = generate_voice_followup(
-            transcript = transcript,
-            question   = question,
-            analysis   = analysis,
-            company    = company,
-            role       = role,
+            transcript          = transcript,
+            question            = question,
+            analysis            = analysis,
+            company             = company,
+            role                = role,
+            previous_followups  = previous_followups,
         )
 
         return jsonify(result), 200

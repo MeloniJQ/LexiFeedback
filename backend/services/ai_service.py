@@ -43,6 +43,7 @@ from services.interview_agent import (
     parse_json_object,
     validate_questions,
 )
+from llm.provider_factory import get_provider
 
 load_dotenv()
 
@@ -111,15 +112,31 @@ def extract_resume_text(filepath: str) -> str:
 
 
 # ─────────────────────────────────────────────
-# Gemini wrapper
+# Chat — OpenRouter (preferred) with Gemini fallback
 # ─────────────────────────────────────────────
 
 def _chat(system: str, user: str, temperature: float = 0.7, json_mode: bool = False) -> str:
     """
-    Thin wrapper around Gemini's generate_content call.
+    Single choke point for every AI call in this service.
 
-    Mirrors the old `_chat()` signature/behaviour so every caller below
-    needed zero changes beyond the import at the top of this file.
+    Preferred path: the configured AI_PROVIDER (OpenRouter by default, via
+    llm/provider_factory.get_provider()). If that call fails for any reason
+    (missing/invalid key, rate limit, network error, provider outage), we
+    fall back to a direct Gemini call. If both external calls fail, the
+    caller's own except block takes over with a static/template fallback.
+    """
+    try:
+        provider = get_provider()
+        return provider.chat(system=system, user=user, temperature=temperature)
+    except Exception as e:
+        logger.warning(f"[_chat] Primary provider failed ({e}); falling back to Gemini.")
+        return _gemini_chat(system, user, temperature=temperature, json_mode=json_mode)
+
+
+def _gemini_chat(system: str, user: str, temperature: float = 0.7, json_mode: bool = False) -> str:
+    """
+    Thin wrapper around Gemini's generate_content call. Used as a fallback
+    when the primary provider (OpenRouter) is unavailable.
 
     json_mode=True tells Gemini to return valid JSON natively (response_mime_type),
     which is more reliable than asking for JSON in the prompt text alone.

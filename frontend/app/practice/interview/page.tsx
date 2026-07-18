@@ -13,7 +13,7 @@ import {
 } from 'lucide-react'
 import Link from 'next/link'
 import { getToken } from '@/lib/auth'
-import { API_URL as API } from '@/lib/api'
+import { API_URL as API, generateInterviewQuestions } from '@/lib/api'
 import { useVoiceRecorder } from '@/hooks/use-voice-recorder'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -58,19 +58,62 @@ interface VoiceAnalysis {
   }
 }
 
+interface AgenticAnalysis {
+  scores: { content: number; delivery: number; vocabulary: number; overall: number }
+  content_analysis: {
+    star_used: boolean
+    relevance: string
+    specificity: string
+    key_strength: string
+    key_gap: string
+  }
+  pattern_analysis: {
+    pattern_trend: 'improving' | 'consistent' | 'declining'
+    recurring_strength: string
+    recurring_gap: string
+    demonstrates_growth: string
+  }
+  competency_alignment: {
+    demonstrated_competencies: string[]
+    confidence_level: 'strong' | 'moderate' | 'weak'
+    risk_flag: string | null
+  }
+  coaching: { immediate_tip: string; if_to_improve: string }
+  question_type?: string
+}
+
+interface SessionComparison {
+  strengths_profile: string[]
+  growth_areas: string[]
+  interview_arc: string
+  role_fit: 'strong' | 'moderate' | 'weak'
+  risk_assessment: string
+  hiring_recommendation: string
+  final_thoughts: string
+}
+
 interface FollowupData {
   followup: string
   probe_target: string
   quote_used: string
 }
 
+interface FollowupRound {
+  data: FollowupData
+  transcript: string
+}
+
 interface QAPair {
   question: Question
   transcript: string
   analysis: VoiceAnalysis
-  followup: FollowupData
-  followupTranscript?: string
+  followups: FollowupRound[]
 }
+
+// Cap on how many follow-up rounds can be chained on a single question —
+// each round is a full record -> transcribe -> generate cycle, so an
+// unbounded chain would make the interview drag on indefinitely.
+const MAX_FOLLOWUP_ROUNDS = 3
 
 type Stage =
   | 'setup'
@@ -124,7 +167,19 @@ export default function InterviewPracticePage() {
   const [pairs, setPairs]             = useState<QAPair[]>([])
   const [transcript, setTranscript]   = useState('')       // editable after transcribe
   const [currentAnalysis, setCurrentAnalysis] = useState<VoiceAnalysis | null>(null)
+  // currentFollowup is whichever follow-up round is currently being shown/answered.
+  // followupChain accumulates COMPLETED rounds for the current main question, so
+  // each new follow-up call can be told what's already been asked/answered.
   const [currentFollowup, setCurrentFollowup] = useState<FollowupData | null>(null)
+  const [followupChain, setFollowupChain] = useState<FollowupRound[]>([])
+  const [generatingNextFollowup, setGeneratingNextFollowup] = useState(false)
+  // Agentic layer: agenticAnalyses accumulates across the whole session and is
+  // sent back as "memory" (previous_analyses) on every subsequent call, so the
+  // AI's evaluation of question 5 is informed by how you answered 1-4.
+  const [currentAgentic, setCurrentAgentic] = useState<AgenticAnalysis | null>(null)
+  const [agenticAnalyses, setAgenticAnalyses] = useState<AgenticAnalysis[]>([])
+  const [sessionComparison, setSessionComparison] = useState<SessionComparison | null>(null)
+  const [sessionComparisonLoading, setSessionComparisonLoading] = useState(false)
   const [followupTranscript, setFollowupTranscript] = useState('')
   const [finalFeedback, setFinalFeedback] = useState('')
   const [error, setError]             = useState('')
@@ -140,30 +195,65 @@ export default function InterviewPracticePage() {
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
   }
 
-  // ── Step 1: Generate questions ────────────────────────────────────────────
-  const handleStart = async () => {
+  // ── Generate questions (profile + plan are now built automatically inside this single step) ──
+  const handleGenerateQuestions = async () => {
     if (!setup.company.trim() || !setup.role.trim()) {
       setError('Company and Job Title are required.')
       return
     }
+    if (!setup.resume && !setup.jobDescription.trim()) {
+      setError('Upload a resume or paste a job description so questions can be personalised.')
+      return
+    }
+
     setError('')
     setStage('loading_questions')
     try {
       const token = getToken()
-      const fd = new FormData()
-      fd.append('company',         setup.company)
-      fd.append('role',            setup.role)
-      fd.append('job_description', setup.jobDescription)
-      fd.append('key_skills',      setup.keySkills)
-      if (setup.resume) fd.append('resume', setup.resume)
 
-      const res  = await fetch(`${API}/interview/start`, {
-        method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd,
+      // Build candidate profile (was the separate "Build Candidate Profile" button)
+      if (setup.resume) {
+        const fd = new FormData()
+        fd.append('file', setup.resume)
+        const resumeRes = await fetch(`${API}/candidate/resume/upload`, {
+          method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd,
+        })
+        const resumeData = await resumeRes.json()
+        if (!resumeRes.ok) throw new Error(resumeData.error || 'Resume parsing failed')
+      }
+      if (setup.jobDescription.trim()) {
+        const jdRes = await fetch(`${API}/candidate/jd/analyze`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ job_description: setup.jobDescription }),
+        })
+        const jdData = await jdRes.json()
+        if (!jdRes.ok) throw new Error(jdData.error || 'Job description analysis failed')
+      }
+
+      // Generate the interview plan (was the separate "Generate Interview Plan" button)
+      // Send company/role explicitly — the plan otherwise has no way to know
+      // what the user is actually interviewing for, and every question
+      // generated downstream depends on this.
+      const planRes = await fetch(`${API}/interview/plan/generate`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company: setup.company, role: setup.role }),
       })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error)
-      setQuestions(data.questions)
-      setResumeParsed(data.resume_parsed ?? false)
+      const planData = await planRes.json()
+      if (!planRes.ok) throw new Error(planData.error || 'Interview plan generation failed')
+
+      // Generate the actual questions
+      const data = await generateInterviewQuestions(10)
+      const mapped = data.questions.map((q, index) => ({
+        id: index + 1,
+        type: q.category || 'technical',
+        question: q.question_text,
+        hint: `${q.category || 'General'} · ${q.topic || 'General'} · ${q.difficulty || 'Medium'}`,
+      }))
+
+      setQuestions(mapped)
+      setResumeParsed(Boolean(setup.resume))
       setCurrentIdx(0)
       setPairs([])
       setTranscript('')
@@ -231,6 +321,33 @@ export default function InterviewPracticePage() {
       })
       setCurrentAnalysis(analysis)
 
+      // Agentic layer: this call gets the FULL history of prior answers in
+      // this session (agenticAnalyses) as "memory", so the AI can judge this
+      // answer relative to how the candidate has been trending, not in
+      // isolation. Wrapped separately so a hiccup here never blocks the core
+      // per-answer analysis/follow-up flow above.
+      try {
+        const agentic: AgenticAnalysis = await authFetch(`${API}/voice/analyze-agentic`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            transcript:        text,
+            question:          currentQ.question,
+            question_type:     currentQ.type,
+            company:           setup.company,
+            role:              setup.role,
+            question_num:      currentIdx + 1,
+            total_questions:   questions.length,
+            previous_analyses: agenticAnalyses,
+          }),
+        })
+        setCurrentAgentic(agentic)
+        setAgenticAnalyses(prev => [...prev, { ...agentic, question_type: currentQ.type }])
+      } catch (agenticErr) {
+        console.error('Agentic analysis failed (non-blocking):', agenticErr)
+        setCurrentAgentic(null)
+      }
+
       // Immediately generate follow-up
       const fu = await authFetch(`${API}/voice/followup`, {
         method: 'POST',
@@ -287,12 +404,12 @@ export default function InterviewPracticePage() {
   const handleSubmitFollowup = () => {
     if (!currentAnalysis || !currentFollowup) return
 
+    const finalRound: FollowupRound = { data: currentFollowup, transcript: followupTranscript || '(skipped)' }
     const pair: QAPair = {
-      question:           currentQ,
-      transcript:         transcript,
-      analysis:           currentAnalysis,
-      followup:           currentFollowup,
-      followupTranscript: followupTranscript || '(skipped)',
+      question:   currentQ,
+      transcript: transcript,
+      analysis:   currentAnalysis,
+      followups:  [...followupChain, finalRound],
     }
     setPairs(prev => [...prev, pair])
 
@@ -300,7 +417,9 @@ export default function InterviewPracticePage() {
     setTranscript('')
     setCurrentAnalysis(null)
     setCurrentFollowup(null)
+    setCurrentAgentic(null)
     setFollowupTranscript('')
+    setFollowupChain([])
     recorder.resetRecording()
     followupRecorder.resetRecording()
 
@@ -312,15 +431,72 @@ export default function InterviewPracticePage() {
     }
   }
 
+  // ── Ask another follow-up round instead of advancing ──────────────────────
+  const handleAskAnotherFollowup = async () => {
+    if (!currentFollowup) return
+
+    const completedRound: FollowupRound = { data: currentFollowup, transcript: followupTranscript || '(skipped)' }
+    const newChain = [...followupChain, completedRound]
+    setFollowupChain(newChain)
+    setError('')
+    setGeneratingNextFollowup(true)
+    try {
+      const fu: FollowupData = await authFetch(`${API}/voice/followup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transcript: completedRound.transcript,
+          question:   completedRound.data.followup,
+          analysis:   currentAnalysis,
+          company:    setup.company,
+          role:       setup.role,
+          previous_followups: newChain.map(r => ({ followup: r.data.followup, answer: r.transcript })),
+        }),
+      })
+      setCurrentFollowup(fu)
+      setFollowupTranscript('')
+      followupRecorder.resetRecording()
+      setStage('followup')
+    } catch (e: any) {
+      setError(e.message)
+    } finally {
+      setGeneratingNextFollowup(false)
+    }
+  }
+
+  // ── Agentic session comparison (the "reflection" step of the agent loop) ──
+  const handleGenerateSessionComparison = async () => {
+    setError('')
+    setSessionComparisonLoading(true)
+    try {
+      const data: SessionComparison = await authFetch(`${API}/voice/session-comparison`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          all_answers: agenticAnalyses,
+          company:     setup.company,
+          role:        setup.role,
+        }),
+      })
+      setSessionComparison(data)
+    } catch (e: any) {
+      setError(e.message)
+    } finally {
+      setSessionComparisonLoading(false)
+    }
+  }
+
   // ── Final feedback ────────────────────────────────────────────────────────
   const handleGetFeedback = async () => {
     setError('')
     try {
       const fullTranscript = pairs.map((p, i) => {
         let b = `Q${i + 1} [${p.question.type}]: ${p.question.question}\n`
-        b += `A: ${p.transcript}\n`
-        b += `Follow-up: ${p.followup.followup}\n`
-        b += `A: ${p.followupTranscript ?? '(skipped)'}`
+        b += `A: ${p.transcript}`
+        p.followups.forEach((round, j) => {
+          b += `\nFollow-up ${j + 1}: ${round.data.followup}\n`
+          b += `A: ${round.transcript}`
+        })
         return b
       }).join('\n\n---\n\n')
 
@@ -352,6 +528,10 @@ export default function InterviewPracticePage() {
     setTranscript('')
     setCurrentAnalysis(null)
     setCurrentFollowup(null)
+    setFollowupChain([])
+    setCurrentAgentic(null)
+    setAgenticAnalyses([])
+    setSessionComparison(null)
     setFollowupTranscript('')
     setFinalFeedback('')
     setError('')
@@ -443,16 +623,18 @@ export default function InterviewPracticePage() {
                 )}
               </div>
             </div>
-            <Button className="w-full" onClick={handleStart}
-              disabled={!setup.company.trim() || !setup.role.trim()}>
-              Generate My Interview Questions <ChevronRight className="w-4 h-4 ml-2" />
-            </Button>
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <Button className="flex-1" onClick={handleGenerateQuestions}
+                disabled={!setup.company.trim() || !setup.role.trim()}>
+                Generate My Interview Questions <ChevronRight className="w-4 h-4 ml-2" />
+              </Button>
+            </div>
           </div>
         )}
 
         {/* ── LOADING QUESTIONS ───────────────────────────────────────────── */}
         {stage === 'loading_questions' && (
-          <LoadingCard message="Reading your resume and crafting questions…" sub="The AI is personalising 5 deep questions for you." />
+          <LoadingCard message="Reading your resume and crafting questions…" sub="The AI is personalising 10 deep questions for you." />
         )}
 
         {/* ── ANSWERING ───────────────────────────────────────────────────── */}
@@ -589,6 +771,50 @@ export default function InterviewPracticePage() {
               </div>
             </div>
 
+            {/* Agentic pattern insight -- this evaluation had "memory" of every prior answer in this session */}
+            {currentAgentic && (
+              <div className="rounded-xl border border-purple-200 dark:border-purple-800 bg-purple-50/50 dark:bg-purple-900/10 p-5 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Brain className="w-4 h-4 text-purple-600" />
+                  <h3 className="font-semibold text-sm text-[#1F2937] dark:text-white">Agentic Pattern Insight</h3>
+                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ml-auto ${
+                    currentAgentic.pattern_analysis.pattern_trend === 'improving'
+                      ? 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300'
+                      : currentAgentic.pattern_analysis.pattern_trend === 'declining'
+                      ? 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300'
+                      : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'
+                  }`}>
+                    Trend: {currentAgentic.pattern_analysis.pattern_trend}
+                  </span>
+                </div>
+                <p className="text-xs text-[#6B7280] dark:text-gray-400">
+                  Based on all {agenticAnalyses.length} answer{agenticAnalyses.length !== 1 ? 's' : ''} so far in this session
+                </p>
+                {currentAgentic.pattern_analysis.recurring_strength && (
+                  <p className="text-sm text-green-700 dark:text-green-400 flex items-start gap-1">
+                    <CheckCircle2 className="w-3 h-3 mt-1 shrink-0" />
+                    Recurring strength: {currentAgentic.pattern_analysis.recurring_strength}
+                  </p>
+                )}
+                {currentAgentic.pattern_analysis.recurring_gap && (
+                  <p className="text-sm text-orange-700 dark:text-orange-400 flex items-start gap-1">
+                    <TrendingUp className="w-3 h-3 mt-1 shrink-0" />
+                    Recurring gap: {currentAgentic.pattern_analysis.recurring_gap}
+                  </p>
+                )}
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-[#6B7280]">Competency confidence:</span>
+                  <span className={`font-semibold capitalize ${
+                    currentAgentic.competency_alignment.confidence_level === 'strong' ? 'text-green-600' :
+                    currentAgentic.competency_alignment.confidence_level === 'weak' ? 'text-red-500' : 'text-yellow-600'
+                  }`}>{currentAgentic.competency_alignment.confidence_level}</span>
+                </div>
+                <p className="text-xs text-[#374151] dark:text-gray-300 bg-white dark:bg-gray-900 rounded-lg p-2 border border-purple-100 dark:border-purple-900">
+                  <strong>Coaching:</strong> {currentAgentic.coaching.immediate_tip}
+                </p>
+              </div>
+            )}
+
             <Button className="w-full gap-2" onClick={handleGoToFollowup}>
               <MessageSquare className="w-4 h-4" /> Answer the Follow-up Question
             </Button>
@@ -603,7 +829,9 @@ export default function InterviewPracticePage() {
               <div className="flex items-start gap-3">
                 <MessageSquare className="w-5 h-5 text-indigo-500 mt-0.5 shrink-0" />
                 <div>
-                  <p className="text-xs uppercase tracking-widest text-indigo-500 mb-1">AI Follow-up</p>
+                  <p className="text-xs uppercase tracking-widest text-indigo-500 mb-1">
+                    AI Follow-up {followupChain.length > 0 && `(round ${followupChain.length + 1} of up to ${MAX_FOLLOWUP_ROUNDS})`}
+                  </p>
                   <p className="text-lg font-semibold text-[#1F2937] dark:text-white">
                     {currentFollowup.followup}
                   </p>
@@ -615,7 +843,9 @@ export default function InterviewPracticePage() {
                 </div>
               </div>
 
-              {stage === 'transcribing_followup' ? (
+              {generatingNextFollowup ? (
+                <LoadingCard message="Preparing the next follow-up…" sub="" />
+              ) : stage === 'transcribing_followup' ? (
                 <LoadingCard message="Transcribing follow-up answer…" sub="" />
               ) : (
                 <>
@@ -632,7 +862,7 @@ export default function InterviewPracticePage() {
                     </div>
                   )}
 
-                  <div className="flex gap-3">
+                  <div className="flex flex-wrap gap-3">
                     <Button
                       className="flex-1"
                       onClick={handleSubmitFollowup}
@@ -640,6 +870,16 @@ export default function InterviewPracticePage() {
                     >
                       {currentIdx + 1 < questions.length ? 'Next Question →' : 'Finish Interview'}
                     </Button>
+                    {followupChain.length + 1 < MAX_FOLLOWUP_ROUNDS && (
+                      <Button
+                        variant="outline"
+                        className="gap-2"
+                        onClick={handleAskAnotherFollowup}
+                        disabled={!followupTranscript && !followupRecorder.audioBlob}
+                      >
+                        <MessageSquare className="w-4 h-4" /> Ask Another Follow-up
+                      </Button>
+                    )}
                     <Button variant="ghost" onClick={handleSubmitFollowup} className="text-sm">
                       Skip
                     </Button>
@@ -675,6 +915,68 @@ export default function InterviewPracticePage() {
                 </div>
               ))}
             </div>
+
+            {/* Agentic session-level reflection: synthesizes ALL answers together */}
+            {agenticAnalyses.length > 0 && (
+              <div className="text-left">
+                {!sessionComparison ? (
+                  <Button
+                    variant="outline"
+                    className="w-full gap-2"
+                    onClick={handleGenerateSessionComparison}
+                    disabled={sessionComparisonLoading}
+                  >
+                    {sessionComparisonLoading
+                      ? <><Loader2 className="w-4 h-4 animate-spin" /> Synthesising your interview arc…</>
+                      : <><Brain className="w-4 h-4" /> Generate Agentic Performance Report</>}
+                  </Button>
+                ) : (
+                  <div className="rounded-xl border border-purple-200 dark:border-purple-800 bg-purple-50/50 dark:bg-purple-900/10 p-5 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-semibold text-[#1F2937] dark:text-white flex items-center gap-2">
+                        <Brain className="w-4 h-4 text-purple-600" /> Agentic Performance Report
+                      </h3>
+                      <span className={`text-xs font-semibold px-2 py-1 rounded-full capitalize ${
+                        sessionComparison.role_fit === 'strong' ? 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300' :
+                        sessionComparison.role_fit === 'weak' ? 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300' :
+                        'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300'
+                      }`}>
+                        {sessionComparison.role_fit} fit
+                      </span>
+                    </div>
+
+                    <p className="text-sm text-[#374151] dark:text-gray-300">{sessionComparison.interview_arc}</p>
+
+                    <div className="grid sm:grid-cols-2 gap-3">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-green-700 dark:text-green-400 mb-1">Strengths Profile</p>
+                        {sessionComparison.strengths_profile.map((s, i) => (
+                          <p key={i} className="text-xs text-[#374151] dark:text-gray-300 flex items-start gap-1">
+                            <CheckCircle2 className="w-3 h-3 mt-0.5 shrink-0 text-green-600" /> {s}
+                          </p>
+                        ))}
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-orange-700 dark:text-orange-400 mb-1">Growth Areas</p>
+                        {sessionComparison.growth_areas.map((g, i) => (
+                          <p key={i} className="text-xs text-[#374151] dark:text-gray-300 flex items-start gap-1">
+                            <TrendingUp className="w-3 h-3 mt-0.5 shrink-0 text-orange-600" /> {g}
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="p-3 rounded-lg bg-white dark:bg-gray-900 border border-purple-100 dark:border-purple-900">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-purple-600 dark:text-purple-400 mb-1">
+                        Hiring Recommendation
+                      </p>
+                      <p className="text-sm font-semibold text-[#1F2937] dark:text-white">{sessionComparison.hiring_recommendation}</p>
+                      <p className="text-xs text-[#6B7280] dark:text-gray-400 mt-1">{sessionComparison.final_thoughts}</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             <Button className="w-full gap-2" onClick={handleGetFeedback}>
               <Star className="w-4 h-4" /> Get Full AI Feedback Report

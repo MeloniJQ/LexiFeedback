@@ -27,6 +27,8 @@ from google import genai
 from google.genai import types
 from dotenv import load_dotenv
 
+from llm.provider_factory import get_provider
+
 load_dotenv()
 
 logger = logging.getLogger("lexifeed.agentic_analysis")
@@ -48,7 +50,24 @@ if not client:
 
 
 def _chat(system: str, user: str, temperature: float = 0.7, json_mode: bool = True) -> str:
-    """Thin wrapper around Gemini's generate_content call (mirrors ai_service._chat)."""
+    """
+    Preferred path: the configured AI_PROVIDER (OpenRouter by default, via
+    llm/provider_factory.get_provider()). Falls back to a direct Gemini call
+    if the primary provider fails for any reason (missing/invalid key, rate
+    limit, network error, provider outage). If both fail, the caller's own
+    except block takes over with a static fallback analysis.
+    """
+    try:
+        provider = get_provider()
+        return provider.chat(system=system, user=user, temperature=temperature)
+    except Exception as e:
+        logger.warning(f"[_chat] Primary provider failed ({e}); falling back to Gemini.")
+        return _gemini_chat(system, user, temperature=temperature, json_mode=json_mode)
+
+
+def _gemini_chat(system: str, user: str, temperature: float = 0.7, json_mode: bool = True) -> str:
+    """Thin wrapper around Gemini's generate_content call. Used as a fallback
+    when the primary provider (OpenRouter) is unavailable."""
     if not client:
         raise RuntimeError("GEMINI_API_KEY missing — Gemini client not initialised")
 

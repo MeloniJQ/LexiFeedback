@@ -29,13 +29,6 @@ MIGRATION NOTES:
    - analyze_voice_answer() and generate_voice_followup() now call Gemini via
      the official `google-genai` SDK, reading GEMINI_API_KEY from the environment.
    - Public function names, parameters, and return shapes are UNCHANGED.
-
-3) Removed dead code: this file previously defined `generate_voice_followup()`
-   TWICE — a first version (raw prompt strings) and a second version later in
-   the file (using the shared `build_followup_prompt()` helper from
-   interview_agent.py) that silently overwrote the first at import time. Only
-   the second (shared-prompt-builder) version is kept, since it was the one
-   actually being used and is more consistent with the rest of the codebase.
 ─────────────────────────────────────────────────────────────────────────────
 """
 
@@ -46,14 +39,14 @@ import logging
 import threading
 from pathlib import Path
 
-from faster_whisper import WhisperModel
 import ctranslate2
-
+from faster_whisper import WhisperModel
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
 
 from services.interview_agent import build_followup_prompt, fallback_followup, parse_json_object
+from llm.provider_factory import get_provider
 
 load_dotenv()
 
@@ -80,7 +73,24 @@ if not client:
 
 
 def _chat(system: str, user: str, temperature: float = 0.6, json_mode: bool = True) -> str:
-    """Thin wrapper around Gemini's generate_content call (mirrors ai_service._chat)."""
+    """
+    Preferred path: the configured AI_PROVIDER (OpenRouter by default, via
+    llm/provider_factory.get_provider()). Falls back to a direct Gemini call
+    if the primary provider fails for any reason (missing/invalid key, rate
+    limit, network error, provider outage). If both fail, the caller's own
+    except block takes over with a static fallback analysis.
+    """
+    try:
+        provider = get_provider()
+        return provider.chat(system=system, user=user, temperature=temperature)
+    except Exception as e:
+        logger.warning(f"[_chat] Primary provider failed ({e}); falling back to Gemini.")
+        return _gemini_chat(system, user, temperature=temperature, json_mode=json_mode)
+
+
+def _gemini_chat(system: str, user: str, temperature: float = 0.6, json_mode: bool = True) -> str:
+    """Thin wrapper around Gemini's generate_content call. Used as a fallback
+    when the primary provider (OpenRouter) is unavailable."""
     if not client:
         raise RuntimeError("GEMINI_API_KEY missing — Gemini client not initialised")
 
@@ -177,6 +187,8 @@ def transcribe_audio(audio_path: str, language: str = "en") -> dict:
         "success": True
       }
 
+    Falls back gracefully if transcription fails (corrupt file, unsupported
+    format, model load failure, etc).
     Public signature and return shape are UNCHANGED from the OpenAI Whisper
     API version, so routes/voice.py needed no changes.
 
@@ -196,7 +208,6 @@ def transcribe_audio(audio_path: str, language: str = "en") -> dict:
 
     try:
         model = _get_whisper_model()
-
         segments, info = model.transcribe(
             audio_path,
             language=language or None,  # None → auto-detect, matching Whisper API's optional language param
@@ -212,7 +223,7 @@ def transcribe_audio(audio_path: str, language: str = "en") -> dict:
         word_count = len(transcript.split())
 
         if not duration:
-            # Estimate: avg speaking pace ~130 wpm (same fallback estimate as before)
+            # Fallback estimate: avg speaking pace ~130 wpm
             duration = round(word_count / 130 * 60, 1)
 
         return {
@@ -354,17 +365,23 @@ Return ONLY this JSON (no markdown fences, no extra keys):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def generate_voice_followup(
-    transcript:    str,
-    question:      str,
-    analysis:      dict,
-    company:       str,
-    role:          str,
+    transcript:         str,
+    question:           str,
+    analysis:            dict,
+    company:            str,
+    role:               str,
+    previous_followups: list[dict] | None = None,
 ) -> dict:
     """
     Generate a follow-up question that specifically references what the
     candidate ACTUALLY said, using the shared `build_followup_prompt()`
     helper (same prompt builder used by the plain-text interview flow),
     enriched with the gaps/top-tip found during voice analysis.
+
+    `previous_followups` lets the caller chain multiple follow-up rounds on
+    the same main question — pass the prior rounds as
+    [{"followup": "...", "answer": "..."}, ...] so this next follow-up
+    probes a new angle instead of repeating ground already covered.
 
     Returns:
     {
@@ -392,6 +409,7 @@ def generate_voice_followup(
     system, user = build_followup_prompt(
         original_question=question,
         candidate_answer=enriched_answer,
+        previous_pairs=previous_followups,
         company=company,
         role=role,
     )

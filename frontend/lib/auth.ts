@@ -18,23 +18,23 @@ const USER_KEY = "auth_user"
 
 export function getToken() {
   if (typeof window === "undefined") return null
-  return localStorage.getItem(TOKEN_KEY)
+  return sessionStorage.getItem(TOKEN_KEY)
 }
 
 export function getUser() {
   if (typeof window === "undefined") return null
-  const user = localStorage.getItem(USER_KEY)
+  const user = sessionStorage.getItem(USER_KEY)
   return user ? JSON.parse(user) : null
 }
 
 export function setAuth(token: string, user: User) {
-  localStorage.setItem(TOKEN_KEY, token)
-  localStorage.setItem(USER_KEY, JSON.stringify(user))
+  sessionStorage.setItem(TOKEN_KEY, token)
+  sessionStorage.setItem(USER_KEY, JSON.stringify(user))
 }
 
 export function clearAuth() {
-  localStorage.removeItem(TOKEN_KEY)
-  localStorage.removeItem(USER_KEY)
+  sessionStorage.removeItem(TOKEN_KEY)
+  sessionStorage.removeItem(USER_KEY)
 }
 
 export async function getCurrentUser() {
@@ -131,4 +131,3 @@ export async function signInWithEmail(email: string, password: string) {
 export async function signOut() {
   clearAuth()
 }
-
