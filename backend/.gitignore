@@ -9,11 +9,7 @@ __pycache__/
 # VS Code / Visual Studio
 .vs/
 
-# Database
-*.db
 
-# Uploads
-backend/uploads/
 
 # Node
 node_modules/

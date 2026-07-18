@@ -18,4 +18,8 @@ node_modules
 .claude/
 .vs/
 venv/
-backend/instance*
+
+*.zip
+backend/instance/
+
+*.db
