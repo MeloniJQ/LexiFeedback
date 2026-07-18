@@ -361,3 +361,11 @@ python app.py
 ## Contributing
 
 Fork the repository, create a branch, implement your changes, and open a pull request with a clear description. Keep backend and frontend changes separate when possible.
+
+## Screen Recordings
+
+You can view the project demonstration videos using the Google Drive link below:
+
+🔗[ https://drive.google.com/drive/folders/1wMZ62Scx87hwHFD8_HgB3Xq5Kzr6kPns?usp=sharing](https://drive.google.com/drive/folders/1wMZ62Scx87hwHFD8_HgB3Xq5Kzr6kPns?usp=sharing)
+
+The folder contains screen recordings demonstrating the key features and workflow of the project.
