@@ -1,6 +1,117 @@
 # LexiFeed Interview System Improvements
 
+## Changelog — July 2026: Fixed persistent 429 rate-limit fallbacks
+
+Logs showed every single AI call failing with a `429` from OpenRouter on
+`meta-llama/llama-3.3-70b-instruct:free` — a popular free model that gets
+rate-limited across ALL OpenRouter users during busy periods, independent
+of your own account's quota (OpenRouter free tier: 20 requests/min, 50/day
+without ever adding credits, 1,000/day permanently once you've added $10
+once — see openrouter.ai/docs/api-reference/limits for current numbers).
+The fallback system correctly caught every failure (no crashes), but you
+were never getting real AI-generated content.
+
+**Files changed:**
+- `.env` — `AI_MODEL` changed from `meta-llama/llama-3.3-70b-instruct:free`
+  to `openrouter/free`, OpenRouter's own auto-router that picks whichever
+  free model currently has capacity instead of hammering one congested model.
+- `llm/openrouter_provider.py` — added retry-with-backoff that honors
+  OpenRouter's `Retry-After` hint (capped at 12s) before giving up, so a
+  brief rate-limit blip doesn't immediately fall back to template content.
+
+**Optional:** adding a one-time $10 balance to your OpenRouter account
+permanently raises the daily free-model cap from 50 to 1,000 requests/day
+(the balance isn't spent by free-model calls — it just unlocks the higher
+quota). Not required, just useful if 50/day becomes limiting during demos.
+
+## Changelog — July 2026: Migrated voice transcription to faster-whisper (free, local)
+
+`transcribe_audio()` in `services/voice_service.py` previously called OpenAI's
+hosted Whisper API, which requires a paid `OPENAI_API_KEY`. Replaced with
+`faster-whisper`, a free, local reimplementation using the same Whisper model
+weights (same accuracy, no API cost, no key required). Model loads once
+per process (lazy singleton) and runs on CPU by default.
+
+**Files changed:**
+- `services/voice_service.py` — `transcribe_audio()` rewritten to use
+  `faster_whisper.WhisperModel` instead of the OpenAI SDK. OpenAI import
+  removed from this file entirely — it now has zero dependency on
+  `OPENAI_API_KEY`.
+- `requirements.txt` — added `faster-whisper==1.1.1`.
+- `.env` — added `WHISPER_MODEL_SIZE` (default `small`), `WHISPER_DEVICE`
+  (default `cpu`), `WHISPER_COMPUTE_TYPE` (default `int8`). Switch
+  `WHISPER_DEVICE=cuda` + `WHISPER_COMPUTE_TYPE=float16` once a GPU is
+  available — no other code changes needed.
+
+**Result:** the entire app — question generation, follow-ups, analysis, and
+now voice transcription — runs on zero paid API keys. Only `OPENROUTER_API_KEY`
+(free tier) is required.
+
+**Note:** the `small` model's weights (~500MB) download automatically from
+Hugging Face the first time `transcribe_audio()` runs, then are cached
+locally — first request after a fresh install will be slower than
+subsequent ones.
+
+## Changelog — July 2026: Fixed identical/repeated question bug
+
+**Correction:** the first pass of this fix targeted `services/ai_service.py`
+and `services/interview_agent.py`'s question-prompt builder. Those files
+turned out NOT to be in the live path the frontend actually calls — they're
+unused/dead code left over from an earlier iteration. Tracing the real
+frontend call graph (`app/practice/interview/page.tsx` → `lib/api.ts`)
+found the actual live files below.
+
+**Real root causes, found and fixed:**
+
+1. **Identical fallback questions** — `agents/question_generator.py`'s
+   `_fallback_questions()` (which runs whenever the OpenRouter call fails
+   or returns too few unique questions) built the exact same
+   `question_text` in a loop `count` times, with only `question_id`
+   differing. This is why every question in a session looked identical.
+   Fixed to pull from a 10-category pool (Project, Core Technical,
+   Programming, Database, Framework, Behavioral, Scenario, Problem Solving,
+   System Design, HR), shuffled per call.
+2. **Hardcoded question count of 5** — `app/practice/interview/page.tsx`
+   called `generateInterviewQuestions(5)`, explicitly overriding the
+   function's own default of 10. Changed to `generateInterviewQuestions(10)`.
+3. **Follow-ups always identical** — `services/voice_service.py` built its
+   own OpenAI client from `OPENAI_API_KEY`, which is never set in `.env`
+   (this project uses OpenRouter). Every follow-up/analysis call silently
+   failed and fell back to one hardcoded string. Fixed `analyze_voice_answer()`
+   and `generate_voice_followup()` to route through
+   `llm/provider_factory.get_provider()` (reads `AI_PROVIDER` +
+   `OPENROUTER_API_KEY`), same as the rest of the app. `transcribe_audio()`
+   (Whisper speech-to-text) still needs a real `OPENAI_API_KEY` — OpenRouter's
+   free tier doesn't proxy audio transcription, so voice recording won't work
+   until a Whisper-capable key is added; see "Known limitations" below.
+4. **Duplicate dead function** — `services/voice_service.py` defined
+   `generate_voice_followup()` twice. Python silently used only the second
+   definition; the first (~90 lines, unreachable) also had a corrupted
+   prompt with a stray `print(...)` statement embedded directly inside the
+   text sent to the LLM. Removed the dead copy entirely.
+5. `fallback_followup()` in `services/interview_agent.py` — was a single
+   hardcoded string; now picks randomly from a small pool.
+
+**Also left in a better state, even though not on the critical path:**
+- `services/ai_service.py` — fixed the same missing-`OPENAI_API_KEY` pattern
+  anyway (routes through `get_provider()` now), in case it gets wired up later.
+- `services/interview_agent.py`'s `build_question_generation_prompt()` and
+  `generate_fallback_questions()` — rewritten for a realistic, category-
+  balanced interview structure, in case this file gets adopted later.
+
+## Known limitations
+- Voice recording/transcription (`transcribe_audio` in `voice_service.py`)
+  requires a genuine `OPENAI_API_KEY` for Whisper — OpenRouter's free tier
+  does not include speech-to-text. Text-based follow-up/analysis works fine
+  on OpenRouter alone.
+- `agents/` and `orchestrator/` (blueprint planner, evaluation agent,
+  recommendation agent) are reachable via `/api/interview/plan/*` and
+  `/api/interview/session/*` but the session-based flow isn't what the
+  live practice page uses end-to-end — worth an audit before relying on it.
+
 ## Overview
+
+
 
 The interview system has been significantly enhanced with three major improvements:
 

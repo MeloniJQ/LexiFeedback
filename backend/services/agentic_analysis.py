@@ -6,33 +6,88 @@ This module provides sophisticated, context-aware analysis of interview answers 
 - Identifies competency gaps and strengths across the session
 - Adapts analysis based on answer patterns
 - Provides differentiated feedback that improves as the interview progresses
+
+─────────────────────────────────────────────────────────────────────────────
+MIGRATION NOTE (OpenAI → Google Gemini):
+This file previously called OpenAI's `gpt-4o-mini` via the `openai` SDK.
+It now calls Google's `gemini-2.5-flash` via the official `google-genai` SDK.
+
+  * All public function names, parameters, and return shapes are UNCHANGED.
+  * The API key is read from GEMINI_API_KEY (see .env).
+  * JSON-producing calls use Gemini's native `response_mime_type =
+    "application/json"` config for reliable structured output.
+─────────────────────────────────────────────────────────────────────────────
 """
 
 import json
 import re
 import os
-from openai import OpenAI
+import logging
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
+
+from llm.provider_factory import get_provider
 
 load_dotenv()
 
-api_key = os.getenv("OPENAI_API_KEY")
-client = OpenAI(api_key=api_key) if api_key else None
+logger = logging.getLogger("lexifeed.agentic_analysis")
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("[%(asctime)s] %(name)s %(levelname)s: %(message)s"))
+    logger.addHandler(handler)
+logger.setLevel(logging.INFO)
 
+GEMINI_MODEL = "gemini-2.5-flash"
 
-def _chat(system: str, user: str, temperature: float = 0.7) -> str:
-    """Thin wrapper around OpenAI chat completions."""
-    if not client:
-        raise RuntimeError("OpenAI client not initialised — check OPENAI_API_KEY.")
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        temperature=temperature,
+api_key = os.getenv("GEMINI_API_KEY")
+client = genai.Client(api_key=api_key) if api_key else None
+
+if not client:
+    logger.warning(
+        "GEMINI_API_KEY is not set — agentic analysis calls will use local fallbacks."
     )
-    return response.choices[0].message.content.strip()
+
+
+def _chat(system: str, user: str, temperature: float = 0.7, json_mode: bool = True) -> str:
+    """
+    Preferred path: the configured AI_PROVIDER (OpenRouter by default, via
+    llm/provider_factory.get_provider()). Falls back to a direct Gemini call
+    if the primary provider fails for any reason (missing/invalid key, rate
+    limit, network error, provider outage). If both fail, the caller's own
+    except block takes over with a static fallback analysis.
+    """
+    try:
+        provider = get_provider()
+        return provider.chat(system=system, user=user, temperature=temperature)
+    except Exception as e:
+        logger.warning(f"[_chat] Primary provider failed ({e}); falling back to Gemini.")
+        return _gemini_chat(system, user, temperature=temperature, json_mode=json_mode)
+
+
+def _gemini_chat(system: str, user: str, temperature: float = 0.7, json_mode: bool = True) -> str:
+    """Thin wrapper around Gemini's generate_content call. Used as a fallback
+    when the primary provider (OpenRouter) is unavailable."""
+    if not client:
+        raise RuntimeError("GEMINI_API_KEY missing — Gemini client not initialised")
+
+    config_kwargs = {
+        "system_instruction": system,
+        "temperature": temperature,
+    }
+    if json_mode:
+        config_kwargs["response_mime_type"] = "application/json"
+
+    response = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=user,
+        config=types.GenerateContentConfig(**config_kwargs),
+    )
+
+    text = (response.text or "").strip()
+    if not text:
+        raise RuntimeError("Gemini returned an empty response")
+    return text
 
 
 def analyze_answer_contextually(
@@ -54,7 +109,7 @@ def analyze_answer_contextually(
     Returns sophisticated breakdown including adaptive scoring.
     """
     if not transcript.strip():
-        print("[analyze_answer_contextually] Empty transcript received.")
+        logger.warning("[analyze_answer_contextually] Empty transcript received.")
         return _empty_analysis()
 
     # Build context about prior answers for comparison
@@ -155,17 +210,15 @@ Return JSON only (no markdown fences):
 }}
 """
     try:
-        raw = _chat(system, user, temperature=0.5)
+        raw = _chat(system, user, temperature=0.5, json_mode=True)
         raw = re.sub(r"```json|```", "", raw).strip()
-        print(f"TRANSCRIPT: {transcript[:100]}...")
+        logger.info(f"[analyze_answer_contextually] transcript_preview={transcript[:100]!r}")
         result = json.loads(raw)
-        
-        print(f"ANALYSIS (Agentic): {json.dumps(result, indent=2)}")
 
         # Ensure all required fields exist
         return _normalize_analysis(result)
     except Exception as e:
-        print(f"[analyze_answer_contextually] OpenAI error: {e}. Using fallback.")
+        logger.error(f"[analyze_answer_contextually] Gemini error: {e}. Using fallback.")
         return _fallback_analysis(transcript, question_type)
 
 
@@ -229,11 +282,11 @@ Return JSON:
 }}
 """
     try:
-        raw = _chat(system, user, temperature=0.7)
+        raw = _chat(system, user, temperature=0.7, json_mode=True)
         raw = re.sub(r"```json|```", "", raw).strip()
         return json.loads(raw)
     except Exception as e:
-        print(f"[generate_session_comparison] Error: {e}")
+        logger.error(f"[generate_session_comparison] Gemini error: {e}")
         return {}
 
 
@@ -277,7 +330,7 @@ def _fallback_analysis(transcript: str, question_type: str) -> dict:
     has_metrics = bool(re.search(r'\b\d+%|\d+x|\$\d+|improved|increased|reduced\b', transcript.lower()))
     has_star = bool(re.search(r'situation|task|action|result|challenge|problem', transcript, re.I))
 
-    # Detection for "bullshit" or very poor answers
+    # Detection for very poor / low-effort answers
     is_very_short = word_count < 15
 
     score_adjustments = {
@@ -302,7 +355,7 @@ def _fallback_analysis(transcript: str, question_type: str) -> dict:
 
     score_adjustments["overall"] = sum(score_adjustments.values()) // 3
 
-    print(f"FALLBACK SCORES (Agentic): {score_adjustments}")
+    logger.info(f"[_fallback_analysis] scores={score_adjustments}")
 
     return {
         "scores": {

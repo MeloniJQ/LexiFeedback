@@ -23,6 +23,7 @@ from services.ai_service import (
     extract_resume_text,
 )
 from utils.jwt_handler import token_required
+from services.goal_service import auto_track_progress
 import os
 import re
 import json
@@ -85,7 +86,7 @@ def start_interview(payload):
       role             (required)
       job_description  (optional)
       key_skills       (optional)
-      num_questions    (optional, default 5, max 20)
+      num_questions    (optional, default 10, max 20)
       resume           (optional file — PDF / DOCX / TXT)
 
     Returns:
@@ -99,7 +100,7 @@ def start_interview(payload):
             job_description = (request.form.get("job_description") or "").strip()
             key_skills      = (request.form.get("key_skills")      or "").strip()
             asked_questions = _json_list(request.form.get("asked_questions"))
-            num_questions   = int(request.form.get("num_questions", 5))
+            num_questions   = int(request.form.get("num_questions", 10))
             resume_file     = request.files.get("resume")
         else:
             data            = request.json or {}
@@ -108,7 +109,7 @@ def start_interview(payload):
             job_description = (data.get("job_description") or "").strip()
             key_skills      = (data.get("key_skills")      or "").strip()
             asked_questions = _json_list(data.get("asked_questions"))
-            num_questions   = int(data.get("num_questions", 5))
+            num_questions   = int(data.get("num_questions", 10))
             resume_file     = None
 
         if not company or not role:
@@ -234,6 +235,13 @@ def get_session_feedback(payload):
         db.session.add(session_record)
         db.session.commit()
 
+        # Auto-track: bump progress/streak on any of the user's active goals
+        # matching this practice mode (interview / presentation / conversation).
+        try:
+            auto_track_progress(payload["user_id"], session_type)
+        except Exception:
+            pass  # Never let goal tracking break the main session save
+
         return jsonify({
             "message": "Session saved successfully",
             "session": session_record.to_dict(),
@@ -293,7 +301,7 @@ def get_user_stats(payload):
                         break
 
         type_data = {t: {"count": 0, "sum": 0, "n": 0}
-                     for t in ("interview", "presentation", "conversation", "reading")}
+                    for t in ("interview", "presentation", "conversation", "reading")}
         for s in sessions:
             t = s.session_type.lower()
             if t in type_data:

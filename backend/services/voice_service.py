@@ -1,64 +1,201 @@
 """
-LexiFeed Voice Service — Step 2
+LexiFeed Voice Service
 
 Handles:
-  transcribe_audio()          → Whisper API → raw transcript text
-  analyze_voice_answer()      → Whisper transcript + GPT analysis of BOTH
-                                 content AND delivery (filler words, pace,
-                                 confidence, structure, clarity)
+  transcribe_audio()          → faster-whisper (local, free) → raw transcript text
+  analyze_voice_answer()      → Gemini analysis of BOTH content AND delivery
+                                 (filler words, pace, confidence, structure, clarity)
   generate_voice_followup()   → Voice-aware follow-up that references what
                                  was actually said (not just inferred)
 
-Why Whisper over Web Speech API:
-  - Works in ALL browsers + mobile (Web Speech = Chrome/Edge only)
-  - Handles accents, non-native speakers, technical jargon far better
-  - Gives us timestamps + word-level confidence we can analyze
-  - Works in production (Web Speech requires page focus + Chrome)
-  - No data sent to Google — stays within OpenAI/Anthropic ecosystem
+─────────────────────────────────────────────────────────────────────────────
+MIGRATION NOTES:
+
+1) Transcription: OpenAI Whisper API → faster-whisper (local, free)
+   - Runs entirely locally using the `faster-whisper` package (CTranslate2-based
+     reimplementation of Whisper). No per-request API cost, no network call.
+   - Model size is configurable via WHISPER_MODEL_SIZE (default "base"; can be
+     set to "small" or "medium" for higher accuracy at the cost of more compute).
+   - GPU is used automatically if CUDA is available (detected via
+     ctranslate2.get_cuda_device_count()); otherwise falls back to CPU with
+     int8 quantization for reasonable speed.
+   - The model is loaded lazily (on first use) and cached as a module-level
+     singleton, since loading it is the expensive part — repeated requests
+     reuse the already-loaded model.
+   - transcribe_audio()'s public signature and return shape are UNCHANGED:
+     {"transcript": str, "duration_seconds": float, "word_count": int, "success": bool, "error"?: str}
+
+2) Text generation/analysis: OpenAI (`gpt-4o-mini`) → Google Gemini (`gemini-2.5-flash`)
+   - analyze_voice_answer() and generate_voice_followup() now call Gemini via
+     the official `google-genai` SDK, reading GEMINI_API_KEY from the environment.
+   - Public function names, parameters, and return shapes are UNCHANGED.
+─────────────────────────────────────────────────────────────────────────────
 """
 
 import os
 import re
 import json
-import tempfile
+import logging
+import threading
 from pathlib import Path
-from openai import OpenAI
+
+import ctranslate2
+from faster_whisper import WhisperModel
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
+
 from services.interview_agent import build_followup_prompt, fallback_followup, parse_json_object
+from llm.provider_factory import get_provider
 
 load_dotenv()
 
-api_key = os.getenv("OPENAI_API_KEY")
-client  = OpenAI(api_key=api_key) if api_key else None
-
-# Whisper supports these formats
-SUPPORTED_AUDIO_FORMATS = {".mp3", ".mp4", ".mpeg", ".mpga", ".m4a", ".wav", ".webm", ".ogg"}
+logger = logging.getLogger("lexifeed.voice_service")
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("[%(asctime)s] %(name)s %(levelname)s: %(message)s"))
+    logger.addHandler(handler)
+logger.setLevel(logging.INFO)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 1. Transcription via Whisper
+# Gemini client (for analysis / follow-up generation)
+# ─────────────────────────────────────────────────────────────────────────────
+
+GEMINI_MODEL = "gemini-2.5-flash"
+
+api_key = os.getenv("GEMINI_API_KEY")
+client = genai.Client(api_key=api_key) if api_key else None
+
+if not client:
+    logger.warning(
+        "GEMINI_API_KEY is not set — voice analysis and follow-up generation will use local fallbacks."
+    )
+
+
+def _chat(system: str, user: str, temperature: float = 0.6, json_mode: bool = True) -> str:
+    """
+    Preferred path: the configured AI_PROVIDER (OpenRouter by default, via
+    llm/provider_factory.get_provider()). Falls back to a direct Gemini call
+    if the primary provider fails for any reason (missing/invalid key, rate
+    limit, network error, provider outage). If both fail, the caller's own
+    except block takes over with a static fallback analysis.
+    """
+    try:
+        provider = get_provider()
+        return provider.chat(system=system, user=user, temperature=temperature)
+    except Exception as e:
+        logger.warning(f"[_chat] Primary provider failed ({e}); falling back to Gemini.")
+        return _gemini_chat(system, user, temperature=temperature, json_mode=json_mode)
+
+
+def _gemini_chat(system: str, user: str, temperature: float = 0.6, json_mode: bool = True) -> str:
+    """Thin wrapper around Gemini's generate_content call. Used as a fallback
+    when the primary provider (OpenRouter) is unavailable."""
+    if not client:
+        raise RuntimeError("GEMINI_API_KEY missing — Gemini client not initialised")
+
+    config_kwargs = {
+        "system_instruction": system,
+        "temperature": temperature,
+    }
+    if json_mode:
+        config_kwargs["response_mime_type"] = "application/json"
+
+    response = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=user,
+        config=types.GenerateContentConfig(**config_kwargs),
+    )
+
+    text = (response.text or "").strip()
+    if not text:
+        raise RuntimeError("Gemini returned an empty response")
+    return text
+
+
+def _clean_json_text(raw: str) -> str:
+    return re.sub(r"```json|```", "", raw).strip()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# faster-whisper model loading (local transcription)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# faster-whisper / ffmpeg-backed decoding supports all of these container formats.
+SUPPORTED_AUDIO_FORMATS = {".mp3", ".mp4", ".mpeg", ".mpga", ".m4a", ".wav", ".webm", ".ogg"}
+
+# Configurable via .env — "base" is a good default (fast, decent accuracy).
+# Set to "small" or "medium" for higher accuracy at the cost of more compute/RAM.
+WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "base")
+
+_whisper_model = None
+_whisper_model_lock = threading.Lock()
+
+
+def _get_whisper_model() -> WhisperModel:
+    """
+    Lazily load (and cache) the faster-whisper model.
+
+    Automatically uses GPU (CUDA) if available, otherwise falls back to CPU
+    with int8 quantization, which keeps CPU-only transcription reasonably fast.
+    """
+    global _whisper_model
+
+    if _whisper_model is not None:
+        return _whisper_model
+
+    with _whisper_model_lock:
+        if _whisper_model is not None:
+            return _whisper_model
+
+        try:
+            cuda_device_count = ctranslate2.get_cuda_device_count()
+        except Exception:
+            cuda_device_count = 0
+
+        if cuda_device_count > 0:
+            device, compute_type = "cuda", "float16"
+        else:
+            device, compute_type = "cpu", "int8"
+
+        logger.info(
+            f"Loading faster-whisper model '{WHISPER_MODEL_SIZE}' on device='{device}' "
+            f"(compute_type='{compute_type}', cuda_devices={cuda_device_count})..."
+        )
+
+        _whisper_model = WhisperModel(
+            WHISPER_MODEL_SIZE,
+            device=device,
+            compute_type=compute_type,
+        )
+        logger.info("faster-whisper model loaded successfully.")
+
+    return _whisper_model
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. Transcription via faster-whisper (local, free)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def transcribe_audio(audio_path: str, language: str = "en") -> dict:
     """
-    Send audio file to OpenAI Whisper and get back:
+    Transcribe a local audio file using faster-whisper and return:
       {
         "transcript": "Full transcribed text",
-        "duration_seconds": 45.2,     ← estimated from word count
+        "duration_seconds": 45.2,
         "word_count": 112,
         "success": True
       }
 
-    Falls back gracefully if Whisper unavailable.
-    """
-    if not client:
-        return {
-            "transcript": "",
-            "duration_seconds": 0,
-            "word_count": 0,
-            "success": False,
-            "error": "OpenAI client not initialised.",
-        }
+    Falls back gracefully if transcription fails (corrupt file, unsupported
+    format, model load failure, etc).
+    Public signature and return shape are UNCHANGED from the OpenAI Whisper
+    API version, so routes/voice.py needed no changes.
 
+    `language` behaves the same as before: pass an ISO 639-1 code (default
+    "en") to hint the language, or an empty string/None to let Whisper
+    auto-detect it.
+    """
     ext = Path(audio_path).suffix.lower()
     if ext not in SUPPORTED_AUDIO_FORMATS:
         return {
@@ -70,40 +207,40 @@ def transcribe_audio(audio_path: str, language: str = "en") -> dict:
         }
 
     try:
-        with open(audio_path, "rb") as audio_file:
-            response = client.audio.transcriptions.create(
-                model    = "whisper-1",
-                file     = audio_file,
-                language = language,
-                # verbose_json gives us word timestamps (useful for pace analysis)
-                response_format = "verbose_json",
-            )
+        model = _get_whisper_model()
+        segments, info = model.transcribe(
+            audio_path,
+            language=language or None,  # None → auto-detect, matching Whisper API's optional language param
+            vad_filter=True,             # skip silence, improves accuracy on short recordings
+            beam_size=5,
+        )
 
-        transcript = response.text.strip()
-        # Whisper verbose_json exposes duration
-        duration   = getattr(response, "duration", None)
-        if duration is None:
-            # Estimate: avg speaking pace ~130 wpm
-            word_count = len(transcript.split())
-            duration   = round(word_count / 130 * 60, 1)
-        else:
-            word_count = len(transcript.split())
+        # segments is a generator — must be consumed to actually run inference
+        segment_list = list(segments)
+        transcript = " ".join(seg.text.strip() for seg in segment_list).strip()
+
+        duration = getattr(info, "duration", None)
+        word_count = len(transcript.split())
+
+        if not duration:
+            # Fallback estimate: avg speaking pace ~130 wpm
+            duration = round(word_count / 130 * 60, 1)
 
         return {
-            "transcript":       transcript,
+            "transcript": transcript,
             "duration_seconds": round(float(duration), 1),
-            "word_count":       word_count,
-            "success":          True,
+            "word_count": word_count,
+            "success": True,
         }
 
     except Exception as e:
-        print(f"[transcribe_audio] Whisper error: {e}")
+        logger.error(f"[transcribe_audio] faster-whisper error: {e}")
         return {
-            "transcript":       "",
+            "transcript": "",
             "duration_seconds": 0,
-            "word_count":       0,
-            "success":          False,
-            "error":            str(e),
+            "word_count": 0,
+            "success": False,
+            "error": str(e),
         }
 
 
@@ -133,7 +270,7 @@ def analyze_voice_answer(
     Returns JSON dict so the frontend can render a rich breakdown UI.
     """
     if not transcript.strip():
-        print("[analyze_voice_answer] Empty transcript provided.")
+        logger.warning("[analyze_voice_answer] Empty transcript provided.")
         return _empty_analysis()
 
     # Compute delivery metrics locally (don't waste tokens on counting)
@@ -199,22 +336,11 @@ Return ONLY this JSON (no markdown fences, no extra keys):
 """
 
     try:
-        if not client:
-            raise RuntimeError("No OpenAI client")
-        response = client.chat.completions.create(
-            model       = "gpt-4o-mini",
-            messages    = [
-                {"role": "system", "content": system},
-                {"role": "user",   "content": user},
-            ],
-            temperature = 0.5,
-        )
-        raw  = response.choices[0].message.content.strip()
-        raw  = re.sub(r"```json|```", "", raw).strip()
+        raw = _chat(system, user, temperature=0.5, json_mode=True)
+        raw = _clean_json_text(raw)
         data = json.loads(raw)
-        
-        print(f"TRANSCRIPT: {transcript[:100]}...")
-        print(f"ANALYSIS: {json.dumps(data, indent=2)}")
+
+        logger.info(f"[analyze_voice_answer] transcript_preview={transcript[:100]!r}")
 
         # Attach pre-computed delivery metrics so frontend has them
         data["metrics"] = {
@@ -230,7 +356,7 @@ Return ONLY this JSON (no markdown fences, no extra keys):
         return data
 
     except Exception as e:
-        print(f"[analyze_voice_answer] Error: {e}")
+        logger.error(f"[analyze_voice_answer] Gemini error: {e}. Using local fallback analysis.")
         return _fallback_analysis(transcript, question, filler_words, avg_wpm, pace_verdict, word_count)
 
 
@@ -239,16 +365,23 @@ Return ONLY this JSON (no markdown fences, no extra keys):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def generate_voice_followup(
-    transcript:    str,
-    question:      str,
-    analysis:      dict,
-    company:       str,
-    role:          str,
+    transcript:         str,
+    question:           str,
+    analysis:            dict,
+    company:            str,
+    role:               str,
+    previous_followups: list[dict] | None = None,
 ) -> dict:
     """
     Generate a follow-up question that specifically references what the
-    candidate ACTUALLY said (using their exact words/phrases where helpful)
-    and probes the most critical gap identified in the analysis.
+    candidate ACTUALLY said, using the shared `build_followup_prompt()`
+    helper (same prompt builder used by the plain-text interview flow),
+    enriched with the gaps/top-tip found during voice analysis.
+
+    `previous_followups` lets the caller chain multiple follow-up rounds on
+    the same main question — pass the prior rounds as
+    [{"followup": "...", "answer": "..."}, ...] so this next follow-up
+    probes a new angle instead of repeating ground already covered.
 
     Returns:
     {
@@ -264,89 +397,6 @@ def generate_voice_followup(
             "quote_used": "",
         }
 
-    gaps    = analysis.get("content_analysis", {}).get("key_gaps", [])
-    top_tip = analysis.get("top_tip", "")
-
-    system = (
-        "You are a sharp interviewer. Generate follow-up questions that feel "
-        "personal and incisive — referencing the candidate's actual words. "
-        "Return valid JSON only, no markdown fences."
-    )
-
-    user = f"""
-INTERVIEW CONTEXT:
-- Role: {role} at {company}
-- Original question: "{question}"
-
-CANDIDATE'S SPOKEN ANSWER (verbatim transcript):
-\"\"\"{transcript}\"\"\"
-
-KEY GAPS IDENTIFIED IN THEIR ANSWER:
-{chr(10).join(f"- {g}" for g in gaps) if gaps else "- Answer was vague in places"}
-
-COACHING NOTE: {top_tip}
-
-Task:
-1. Find the most important gap or vague/unsubstantiated claim in their answer.
-2. Quote the EXACT phrase from their transcript that was weakest (2–6 words).
-3. Write ONE follow-up question (1–2 sentences) that:
-   - References their actual words naturally (e.g., "You mentioned you 'led the migration'...")
-   - Probes specifically for what was missing
-   - Sounds like a real interviewer, not a chatbot
-
-Return ONLY this JSON:
-
-print(f"FOLLOWUP INPUT: {transcript[:100]}...")
-{{
-  "followup": "...",
-  "probe_target": "one phrase describing what this tests (e.g., 'ownership depth', 'quantifiable impact')",
-  "quote_used": "the 2-6 word phrase from transcript that triggered this follow-up"
-}}
-"""
-
-    try:
-        if not client:
-            raise RuntimeError("No client")
-        response = client.chat.completions.create(
-            model       = "gpt-4o-mini",
-            messages    = [
-                {"role": "system", "content": system},
-                {"role": "user",   "content": user},
-            ],
-            temperature = 0.65,
-        )
-        raw  = response.choices[0].message.content.strip()
-        raw  = re.sub(r"```json|```", "", raw).strip()
-        data = json.loads(raw)
-        if "followup" in data:
-            return data
-        raise ValueError("Missing followup key")
-    except Exception as e:
-        print(f"[generate_voice_followup] Error: {e}")
-        return {
-            "followup":    "Can you give me a concrete example with specific numbers or outcomes?",
-            "probe_target": "specificity and impact",
-            "quote_used":   "",
-        }
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Helpers
-# ─────────────────────────────────────────────────────────────────────────────
-
-def generate_voice_followup(
-    transcript:    str,
-    question:      str,
-    analysis:      dict,
-    company:       str,
-    role:          str,
-) -> dict:
-    """
-    Agentic voice follow-up generator.
-
-    Keeps the frontend response shape while selecting the follow-up from the
-    candidate's actual answer, analysis gaps, role, and company context.
-    """
     gaps = analysis.get("content_analysis", {}).get("key_gaps", [])
     top_tip = analysis.get("top_tip", "")
     enriched_answer = transcript
@@ -359,32 +409,25 @@ def generate_voice_followup(
     system, user = build_followup_prompt(
         original_question=question,
         candidate_answer=enriched_answer,
+        previous_pairs=previous_followups,
         company=company,
         role=role,
     )
 
     try:
-        if not client:
-            raise RuntimeError("No client")
-        response = client.chat.completions.create(
-            model       = "gpt-4o-mini",
-            messages    = [
-                {"role": "system", "content": system},
-                {"role": "user",   "content": user},
-            ],
-            temperature = 0.75,
-        )
-        data = parse_json_object(response.choices[0].message.content.strip())
+        raw = _chat(system, user, temperature=0.75, json_mode=True)
+        data = parse_json_object(_clean_json_text(raw))
+
         if "followup" not in data:
-            print(f"FOLLOWUP OUTPUT: {data.get('followup')}")
             raise ValueError("Missing followup key")
+
         return {
             "followup": data["followup"],
             "probe_target": data.get("probe_target", data.get("reason", "")),
             "quote_used": data.get("quote_used", ""),
         }
     except Exception as e:
-        print(f"[generate_voice_followup] Agent error: {e}")
+        logger.error(f"[generate_voice_followup] Gemini error: {e}. Using fallback follow-up.")
         result = fallback_followup(question, transcript, company, role)
         return {
             "followup": result["followup"],
@@ -392,6 +435,10 @@ def generate_voice_followup(
             "quote_used": result.get("quote_used", ""),
         }
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────────────────────
 
 FILLER_PATTERN = re.compile(
     r"\b(um+|uh+|like|you know|basically|actually|honestly|literally|"
@@ -427,7 +474,7 @@ def _empty_analysis() -> dict:
 
 def _fallback_analysis(transcript, question, filler_words, avg_wpm, pace_verdict, word_count) -> dict:
     score = 6
-    # Detect poor content / "bullshit" answers
+    # Detect poor content / low-effort answers
     if word_count < 15:
         score = 2
     elif word_count < 40:
@@ -437,7 +484,7 @@ def _fallback_analysis(transcript, question, filler_words, avg_wpm, pace_verdict
     if filler_words["count"] < 3: score += 1
     if avg_wpm in range(120, 161) and word_count >= 15: score += 1
 
-    print(f"FALLBACK SCORES: content={score}, delivery={10 - filler_words['count']}")
+    logger.info(f"[_fallback_analysis] content_score={score} delivery_score={10 - filler_words['count']}")
 
     return {
         "scores": {
