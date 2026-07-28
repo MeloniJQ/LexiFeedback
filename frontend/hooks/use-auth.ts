@@ -58,7 +58,9 @@ export function useAuth() {
         const newUser = await signUpAPI(email, password, fullName, age, education)
         setUser(newUser)
         setProfile(newUser)
-        router.push('/dashboard')
+        // Brand-new users always need the CEFR placement test before they
+        // ever see the dashboard (Feature 1).
+        router.push(newUser.assessment_completed ? '/dashboard' : '/assessment')
         return newUser
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Signup failed'
@@ -79,7 +81,7 @@ export function useAuth() {
         const loggedInUser = await signInAPI(email, password)
         setUser(loggedInUser)
         setProfile(loggedInUser)
-        router.push('/dashboard')
+        router.push(loggedInUser.assessment_completed ? '/dashboard' : '/assessment')
         return loggedInUser
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Login failed'

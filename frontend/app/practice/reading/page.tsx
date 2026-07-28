@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react'
 import { Header } from '@/components/layout/header'
 import { Sidebar } from '@/components/layout/sidebar'
 import { Button } from '@/components/ui/button'
-import { getToken } from '@/lib/auth'
+import { getToken, getUser } from '@/lib/auth'
 import { API_URL as API } from '@/lib/api'
 import { useVoiceRecorder } from '@/hooks/use-voice-recorder'
 import {
@@ -39,6 +39,7 @@ const NEWS_TICKERS = [
 export default function ReadingPracticePage() {
   // Config state
   const [difficulty, setDifficulty] = useState<'beginner' | 'intermediate' | 'advanced'>('intermediate')
+  const [length, setLength] = useState<'short' | 'medium' | 'long'>('medium')
   const [mode, setMode] = useState<'standard' | 'journalist'>('standard')
   
   // Passage and loading
@@ -66,7 +67,11 @@ export default function ReadingPracticePage() {
   // ─────────────────────────────────────────────────────────────────────────────
   // Fetch dynamic passage from AI backend
   // ─────────────────────────────────────────────────────────────────────────────
-  const generateNewPassage = async (selectedDifficulty = difficulty, selectedMode = mode) => {
+  const generateNewPassage = async (
+    selectedDifficulty = difficulty,
+    selectedMode = mode,
+    selectedLength = length
+  ) => {
     setLoading(true)
     setError('')
     setFeedback(null)
@@ -85,7 +90,8 @@ export default function ReadingPracticePage() {
         },
         body: JSON.stringify({
           difficulty: selectedDifficulty,
-          mode: selectedMode
+          mode: selectedMode,
+          length: selectedLength
         })
       })
 
@@ -113,9 +119,26 @@ export default function ReadingPracticePage() {
     }
   }
 
-  // Generate initial passage on mount
+  // Default the difficulty selector to the user's assessed CEFR level
+  // (Feature 1 → Feature 3 integration), then generate the initial passage
+  // using that resolved difficulty directly (not via state, to avoid a
+  // stale-closure race between this effect and the state update).
   useEffect(() => {
-    generateNewPassage()
+    const user = getUser()
+    let initialDifficulty = difficulty
+    if (user?.english_level) {
+      const cefrToDifficulty: Record<string, 'beginner' | 'intermediate' | 'advanced'> = {
+        A1: 'beginner', A2: 'beginner',
+        B1: 'intermediate', B2: 'intermediate',
+        C1: 'advanced', C2: 'advanced',
+      }
+      const mapped = cefrToDifficulty[user.english_level]
+      if (mapped) {
+        initialDifficulty = mapped
+        setDifficulty(mapped)
+      }
+    }
+    generateNewPassage(initialDifficulty, mode, length)
   }, [])
 
   // Rotate ticker messages in TV mode
@@ -349,7 +372,7 @@ export default function ReadingPracticePage() {
               {/* Mode Switcher */}
               <div className="inline-flex rounded-lg bg-gray-100 dark:bg-gray-800 p-1 self-start md:self-auto border border-gray-200 dark:border-gray-700">
                 <button
-                  onClick={() => { setMode('standard'); generateNewPassage(difficulty, 'standard') }}
+                  onClick={() => { setMode('standard'); generateNewPassage(difficulty, 'standard', length) }}
                   className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-semibold transition ${
                     mode === 'standard'
                       ? 'bg-white dark:bg-gray-950 text-indigo-600 dark:text-indigo-400 shadow-sm'
@@ -360,7 +383,7 @@ export default function ReadingPracticePage() {
                   Standard
                 </button>
                 <button
-                  onClick={() => { setMode('journalist'); generateNewPassage(difficulty, 'journalist') }}
+                  onClick={() => { setMode('journalist'); generateNewPassage(difficulty, 'journalist', length) }}
                   className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-semibold transition ${
                     mode === 'journalist'
                       ? 'bg-white dark:bg-gray-950 text-red-600 dark:text-red-400 shadow-sm'
@@ -383,29 +406,52 @@ export default function ReadingPracticePage() {
 
             {/* Difficulty Selector and Generation Control */}
             <div className="bg-white dark:bg-[#1E293B] rounded-xl border border-gray-200 dark:border-gray-800 p-5 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
-              <div className="space-y-1 self-start sm:self-auto">
-                <label className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                  Difficulty Level
-                </label>
-                <div className="flex gap-2 mt-1">
-                  {(['beginner', 'intermediate', 'advanced'] as const).map((level) => (
-                    <button
-                      key={level}
-                      onClick={() => { setDifficulty(level); generateNewPassage(level, mode) }}
-                      className={`px-3 py-1.5 rounded-full text-xs font-bold border transition capitalize ${
-                        difficulty === level
-                          ? 'bg-indigo-600 border-indigo-600 text-white dark:bg-indigo-500 dark:border-indigo-500'
-                          : 'bg-transparent border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'
-                      }`}
-                    >
-                      {level}
-                    </button>
-                  ))}
+              <div className="flex flex-col sm:flex-row gap-4">
+                <div className="space-y-1 self-start sm:self-auto">
+                  <label className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    Difficulty Level
+                  </label>
+                  <div className="flex gap-2 mt-1">
+                    {(['beginner', 'intermediate', 'advanced'] as const).map((level) => (
+                      <button
+                        key={level}
+                        onClick={() => { setDifficulty(level); generateNewPassage(level, mode, length) }}
+                        className={`px-3 py-1.5 rounded-full text-xs font-bold border transition capitalize ${
+                          difficulty === level
+                            ? 'bg-indigo-600 border-indigo-600 text-white dark:bg-indigo-500 dark:border-indigo-500'
+                            : 'bg-transparent border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'
+                        }`}
+                      >
+                        {level}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-1 self-start sm:self-auto">
+                  <label className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    Passage Length
+                  </label>
+                  <div className="flex gap-2 mt-1">
+                    {(['short', 'medium', 'long'] as const).map((len) => (
+                      <button
+                        key={len}
+                        onClick={() => { setLength(len); generateNewPassage(difficulty, mode, len) }}
+                        className={`px-3 py-1.5 rounded-full text-xs font-bold border transition capitalize ${
+                          length === len
+                            ? 'bg-indigo-600 border-indigo-600 text-white dark:bg-indigo-500 dark:border-indigo-500'
+                            : 'bg-transparent border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'
+                        }`}
+                      >
+                        {len}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 
               <Button
-                onClick={() => generateNewPassage(difficulty, mode)}
+                onClick={() => generateNewPassage(difficulty, mode, length)}
                 disabled={loading}
                 variant="outline"
                 className="w-full sm:w-auto border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 gap-2 shrink-0 font-bold"

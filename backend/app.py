@@ -20,6 +20,7 @@ from routes.modes import modes_bp
 from routes.health import health_bp
 from routes.vocabulary import vocabulary_bp
 from routes.goals import goals_bp
+from routes.assessment import assessment_bp
 
 import sys
 import os
@@ -70,6 +71,7 @@ app.register_blueprint(modes_bp, url_prefix="/api/modes")
 app.register_blueprint(health_bp, url_prefix="/api")
 app.register_blueprint(vocabulary_bp, url_prefix="/api/vocabulary")
 app.register_blueprint(goals_bp, url_prefix="/api/goals")
+app.register_blueprint(assessment_bp, url_prefix="/api/assessment")
 
 @app.route("/", methods=["GET"])
 def root():
@@ -81,6 +83,39 @@ def root():
 # Create database tables on first run
 with app.app_context():
     db.create_all()
+
+    # ── Lightweight auto-migration for the CEFR assessment columns ─────────
+    # db.create_all() only creates missing TABLES, it never ALTERs existing
+    # ones — so a developer with a pre-existing app.db (created before this
+    # feature) would otherwise crash on the first query that touches these
+    # new User columns. The project has no migration framework (no Alembic),
+    # so this adds any missing columns directly via SQLite's ALTER TABLE.
+    # Safe to run on every startup: it only adds columns that don't exist.
+    try:
+        from sqlalchemy import inspect, text
+
+        inspector = inspect(db.engine)
+        if "users" in inspector.get_table_names():
+            existing_columns = {col["name"] for col in inspector.get_columns("users")}
+            new_columns = {
+                "english_level": "VARCHAR(2)",
+                "assessment_completed": "BOOLEAN DEFAULT 0",
+                "assessment_date": "DATETIME",
+                "overall_score": "FLOAT",
+                "grammar_score": "FLOAT",
+                "vocabulary_score": "FLOAT",
+                "pronunciation_score": "FLOAT",
+                "fluency_score": "FLOAT",
+                "speaking_score": "FLOAT",
+                "reading_score": "FLOAT",
+                "listening_score": "FLOAT",
+            }
+            for col_name, col_type in new_columns.items():
+                if col_name not in existing_columns:
+                    db.session.execute(text(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}"))
+            db.session.commit()
+    except Exception as migration_error:
+        print(f"[startup migration] Warning: could not auto-migrate users table: {migration_error}")
 
 if __name__ == "__main__":
     app.run(debug=True, use_reloader=False, port=5000, host="0.0.0.0")

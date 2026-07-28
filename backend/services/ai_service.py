@@ -44,6 +44,7 @@ from services.interview_agent import (
     validate_questions,
 )
 from llm.provider_factory import get_provider
+from utils.cefr import CEFR_READING_TOPICS, READING_LENGTHS, normalize_level
 
 load_dotenv()
 
@@ -366,11 +367,18 @@ _last_fallback_index: dict = {}
 _recent_titles_lock = threading.Lock()
 
 
-def _build_passage_prompt(difficulty: str, mode: str):
+def _build_passage_prompt(difficulty: str, mode: str, level: str = None, length: str = None):
     """
     Builds (system_prompt, user_prompt, chosen_topic) for either a standard
     reading passage or a TV news anchor script, with a randomly chosen topic
     and a "don't repeat the last one" instruction baked in.
+
+    level  — optional CEFR level (A1-C2). When given, topics are drawn from
+             the CEFR-appropriate pool (utils/cefr.CEFR_READING_TOPICS)
+             instead of the generic difficulty-tier pool, per Feature 3.
+    length — optional "short" | "medium" | "long" (utils/cefr.READING_LENGTHS).
+             Overrides the word-count target while difficulty still controls
+             vocabulary/grammar complexity via the existing style_rules.
     """
     key = f"{mode}:{difficulty}"
 
@@ -390,9 +398,14 @@ def _build_passage_prompt(difficulty: str, mode: str):
         if last_title else ""
     )
 
+    topic_pool = CEFR_READING_TOPICS[normalize_level(level)] if level else None
+    length_override = READING_LENGTHS.get(length) if length else None
+
     if mode == "journalist":
-        topic = random.choice(NEWS_TOPICS)
+        topic = random.choice(topic_pool) if topic_pool else random.choice(NEWS_TOPICS)
         min_words, max_words, style_rules = NEWS_LENGTH_RULES.get(difficulty, NEWS_LENGTH_RULES["intermediate"])
+        if length_override:
+            min_words, max_words = length_override
 
         tone_rules = {
             "beginner": (
@@ -432,8 +445,10 @@ Return ONLY a JSON object with 'title' and 'content' keys, no markdown formattin
 }}
 """
     else:
-        topic = random.choice(READING_TOPICS)
+        topic = random.choice(topic_pool) if topic_pool else random.choice(READING_TOPICS)
         min_words, max_words, style_rules = STANDARD_LENGTH_RULES.get(difficulty, STANDARD_LENGTH_RULES["intermediate"])
+        if length_override:
+            min_words, max_words = length_override
 
         user_prompt = f"""
 Write a completely original educational reading passage for an English-learning app.
@@ -459,35 +474,51 @@ Return ONLY a JSON object with 'title' and 'content' keys, no markdown formattin
     return system_prompt, user_prompt, topic
 
 
-def generate_ai_passage(difficulty: str, mode: str) -> dict:
+def generate_ai_passage(difficulty: str, mode: str, level: str = None, length: str = None, exclude_titles: list = None) -> dict:
     """
     Generate an AI passage (standard reading passage or TV news anchor script)
     using Gemini 2.5 Flash.
 
-    Public signature and return shape are unchanged from the OpenAI version:
-        {"title": "...", "content": "..."}
+    Public signature is backward-compatible — difficulty/mode are unchanged
+    and remain the only required args. New optional args (Feature 3):
+      level          — CEFR level (A1-C2), picks a level-appropriate topic pool
+      length         — "short" | "medium" | "long"
+      exclude_titles — recent titles (any source) to actively avoid repeating;
+                        triggers up to 2 regeneration attempts on collision.
+
+    Return shape is unchanged: {"title": "...", "content": "..."}
     """
-    system_prompt, user_prompt, topic = _build_passage_prompt(difficulty, mode)
+    exclude_titles = [t.strip().lower() for t in (exclude_titles or []) if t]
 
-    try:
-        raw = _chat(system_prompt, user_prompt, temperature=0.9, json_mode=True)
-        raw = _clean_json_text(raw)
-        data = json.loads(raw)
+    for attempt in range(3):
+        system_prompt, user_prompt, topic = _build_passage_prompt(difficulty, mode, level=level, length=length)
 
-        if "title" in data and "content" in data:
+        try:
+            raw = _chat(system_prompt, user_prompt, temperature=0.9, json_mode=True)
+            raw = _clean_json_text(raw)
+            data = json.loads(raw)
+
+            if "title" not in data or "content" not in data:
+                raise ValueError("Invalid JSON keys returned by Gemini")
+
+            if data["title"].strip().lower() in exclude_titles and attempt < 2:
+                logger.info(f"[generate_ai_passage] Duplicate title '{data['title']}' — regenerating (attempt {attempt + 1}).")
+                continue
+
             key = f"{mode}:{difficulty}"
             with _recent_titles_lock:
                 _last_generated_title[key] = data["title"]
-            logger.info(f"[generate_ai_passage] mode={mode} difficulty={difficulty} topic={topic} -> '{data['title']}'")
+            logger.info(f"[generate_ai_passage] mode={mode} difficulty={difficulty} level={level} topic={topic} -> '{data['title']}'")
             return data
 
-        raise ValueError("Invalid JSON keys returned by Gemini")
+        except Exception as e:
+            logger.error(
+                f"[generate_ai_passage] Gemini error (mode={mode}, difficulty={difficulty}, attempt={attempt + 1}): {e}."
+            )
+            continue
 
-    except Exception as e:
-        logger.error(
-            f"[generate_ai_passage] Gemini error (mode={mode}, difficulty={difficulty}): {e}. Using fallback pool."
-        )
-        return _fallback_passage(difficulty, mode)
+    logger.error(f"[generate_ai_passage] All attempts failed/duplicated (mode={mode}, difficulty={difficulty}). Using fallback pool.")
+    return _fallback_passage(difficulty, mode, exclude_titles=exclude_titles)
 
 
 # ─────────────────────────────────────────────
@@ -611,26 +642,33 @@ _FALLBACK_POOLS = {
 }
 
 
-def _fallback_passage(difficulty: str, mode: str) -> dict:
+def _fallback_passage(difficulty: str, mode: str, exclude_titles: list = None) -> dict:
     """
     Returns a fallback passage when Gemini is unavailable or errors out.
 
     Unlike the previous single-passage-per-key implementation, this now
     randomly selects from a pool of several passages per (mode, difficulty),
-    while actively avoiding picking the same one twice in a row.
+    while actively avoiding picking the same one twice in a row, and
+    (Feature 3) avoiding any title already in exclude_titles when possible.
     """
     mode_key = mode if mode in _FALLBACK_POOLS else "standard"
     difficulty_key = difficulty if difficulty in _FALLBACK_POOLS[mode_key] else "intermediate"
     pool = _FALLBACK_POOLS[mode_key][difficulty_key]
+    exclude_titles = set(exclude_titles or [])
 
     key = f"{mode_key}:{difficulty_key}"
     with _recent_titles_lock:
         last_index = _last_fallback_index.get(key, -1)
 
-    if len(pool) > 1:
-        candidates = [i for i in range(len(pool)) if i != last_index]
-    else:
-        candidates = [0]
+    candidates = [
+        i for i in range(len(pool))
+        if i != last_index and pool[i]["title"].strip().lower() not in exclude_titles
+    ]
+    if not candidates:
+        # Every item is either the last one shown or already seen recently —
+        # fall back to "just not the immediately previous one" rather than
+        # blocking the user entirely.
+        candidates = [i for i in range(len(pool)) if i != last_index] or [0]
 
     chosen_index = random.choice(candidates)
 
