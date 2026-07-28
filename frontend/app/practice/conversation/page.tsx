@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Mic, Square, Send, Volume2, User, Home } from 'lucide-react'
 import Link from 'next/link'
+import { getUser } from '@/lib/auth'
 
 export default function ConversationPracticePage() {
   const [isRecording, setIsRecording] = useState(false)
@@ -58,7 +59,8 @@ export default function ConversationPracticePage() {
         body: JSON.stringify({ 
           transcript, 
           topic: selectedTopic,
-          conversation: newConversation 
+          conversation: newConversation,
+          englishLevel: getUser()?.english_level ?? null,
         }),
       })
 

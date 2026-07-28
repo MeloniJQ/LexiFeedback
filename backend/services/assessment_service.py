@@ -205,8 +205,66 @@ Return ONLY JSON in this shape:
             return questions[:2]
         raise ValueError("Malformed comprehension questions from AI")
     except Exception as e:
-        logger.warning(f"[_generate_comprehension_questions] AI generation failed ({e}); using fallback.")
+        logger.warning(f"[_generate_comprehension_questions] AI generation failed ({e}); using passage-derived fallback.")
+        return _fallback_comprehension_from_passage(passage_text)
+
+
+# Distinctive-looking filler words that are very unlikely to appear in a
+# short passage — used as plausible-looking WRONG options for the
+# passage-derived fallback comprehension questions below.
+_DISTRACTOR_WORD_POOL = [
+    "volcano", "orchestra", "spreadsheet", "umbrella", "telescope", "backpack",
+    "committee", "sculpture", "avalanche", "keyboard", "aquarium", "elevator",
+    "lighthouse", "parliament", "escalator", "microscope", "warehouse", "battery",
+]
+
+_COMMON_STOPWORDS = {
+    "about", "after", "again", "their", "there", "these", "those", "which",
+    "while", "would", "could", "should", "where", "being", "other", "still",
+    "every", "first", "never", "since", "under", "until", "though", "through",
+}
+
+
+def _fallback_comprehension_from_passage(passage_text: str) -> list:
+    """
+    When AI-generated comprehension questions aren't available, build a
+    "which word actually appeared" recognition check straight from the real
+    passage text instead of falling back to a fully generic, passage-
+    unrelated question. It's a coarser signal than true comprehension
+    (it checks attentive reading/listening rather than understanding), but
+    unlike a disconnected static question, a correct answer here still
+    requires having actually read/heard THIS passage — so the assessment
+    stays diagnostic even during an AI outage instead of becoming a coin flip.
+    """
+    words = re.findall(r"[A-Za-z]{5,}", passage_text)
+    seen = set()
+    candidates = []
+    for w in words:
+        lw = w.lower()
+        if lw in _COMMON_STOPWORDS or lw in seen:
+            continue
+        seen.add(lw)
+        candidates.append(w)
+
+    if len(candidates) < 6:
+        # Passage too short/sparse to build a fair question from — fall
+        # back to the generic pair rather than risk a broken/trivial question.
         return [dict(q) for q in _FALLBACK_COMPREHENSION]
+
+    random.shuffle(candidates)
+    questions = []
+    for correct_word in candidates[:2]:
+        distractors = random.sample(
+            [d for d in _DISTRACTOR_WORD_POOL if d.lower() not in seen], 3
+        )
+        options = distractors + [correct_word]
+        random.shuffle(options)
+        questions.append({
+            "question": "Which of these words actually appeared in the passage/segment you just read or heard?",
+            "options": options,
+            "answer": options.index(correct_word),
+        })
+    return questions
 
 
 # ─────────────────────────────────────────────────────────────

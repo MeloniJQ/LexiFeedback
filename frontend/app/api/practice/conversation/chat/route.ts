@@ -1,9 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
 
+interface ConversationTurn {
+  speaker: 'system' | 'user'
+  text: string
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { transcript, topic, conversation } = body
+    const { transcript, topic, conversation, englishLevel } = body as {
+      transcript: string
+      topic?: string
+      conversation?: ConversationTurn[]
+      englishLevel?: string | null
+    }
 
     if (!transcript || transcript.trim().length === 0) {
       return NextResponse.json(
@@ -12,12 +22,11 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const aiResponse = generateAIResponse(transcript, topic)
-    const feedback = generateFeedback(transcript)
+    const aiResult = await generateAIConversationTurn(transcript, topic, conversation ?? [], englishLevel ?? null)
 
     return NextResponse.json({
-      response: aiResponse,
-      feedback: feedback,
+      response: aiResult.response,
+      feedback: aiResult.feedback,
       timestamp: new Date().toISOString(),
     })
   } catch (error: any) {
@@ -29,10 +38,152 @@ export async function POST(request: NextRequest) {
   }
 }
 
-function generateAIResponse(userMessage: string, topic?: string): string {
+// ── CEFR language complexity (same approach as the presentation route) ─────
+function cefrClause(englishLevel: string | null): string {
+  if (!englishLevel) return ''
+  const level = String(englishLevel).toUpperCase()
+  const guidance: Record<string, string> = {
+    A1: 'Use very short sentences (5-8 words) and only the most common everyday words. No idioms, no phrasal verbs. Ask one simple question at a time.',
+    A2: 'Use short, simple sentences and common vocabulary. Avoid idioms and complex grammar like conditionals or passive voice.',
+    B1: 'Use clear, moderately simple sentences. You can use some everyday idioms, but avoid dense or rare vocabulary.',
+    B2: 'Use natural conversational English — normal idioms and moderately complex sentences are fine.',
+    C1: 'Use fluent, natural English including idiomatic phrasing and nuanced follow-up questions, as with a native speaker.',
+    C2: 'Use sophisticated, idiomatic, native-level conversational English freely, including subtext and nuance.',
+  }
+  if (!guidance[level]) return ''
+  return ` The learner's English level is ${level}. ${guidance[level]}`
+}
+
+// ── AI-backed conversation turn (primary), with the original canned logic
+// as a safety-net fallback if both providers are unavailable ───────────────
+async function generateAIConversationTurn(
+  userMessage: string,
+  topic: string | undefined,
+  conversation: ConversationTurn[],
+  englishLevel: string | null
+): Promise<{ response: string; feedback: string }> {
+  const history = conversation
+    .slice(-8) // keep the prompt small — recent turns are what matter for a natural reply
+    .map(t => `${t.speaker === 'user' ? 'Learner' : 'You'}: ${t.text}`)
+    .join('\n')
+
+  const systemPrompt =
+    'You are a friendly, patient English conversation partner helping a learner practice speaking. ' +
+    'Keep the conversation natural and engaging, ask one genuine follow-up question, and stay on topic.' +
+    cefrClause(englishLevel) +
+    ' Respond with ONLY valid JSON, no markdown fences, no commentary.'
+
+  const userPrompt = `${topic ? `Conversation topic: "${topic}"\n` : ''}${history ? `Recent conversation:\n${history}\n\n` : ''}Learner just said: "${userMessage}"
+
+Reply naturally, as their conversation partner would (1-3 sentences, at least one genuine follow-up question).
+Then give brief, encouraging feedback on the learner's English in that message (grammar, vocabulary, fluency) —
+2-4 short bullet points, specific to what they actually wrote, starting each strength with "✓".
+
+Return ONLY this JSON:
+{
+  "response": "your natural conversational reply",
+  "feedback": "✓ ...\\n• ...\\n..."
+}`
+
+  const raw =
+    (await tryGroqChat(systemPrompt, userPrompt)) ??
+    (await tryGeminiChat(systemPrompt, userPrompt))
+
+  if (raw) {
+    const parsed = parseChatJson(raw)
+    if (parsed) return parsed
+  }
+
+  // Both providers unavailable/failed — fall back to the original
+  // deterministic canned responder so conversation practice never breaks.
+  return {
+    response: generateCannedResponse(userMessage, topic),
+    feedback: generateCannedFeedback(userMessage),
+  }
+}
+
+function parseChatJson(rawText: string): { response: string; feedback: string } | null {
+  const clean = rawText.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim()
+  const start = clean.indexOf('{')
+  const end = clean.lastIndexOf('}')
+  if (start === -1 || end === -1) return null
+  try {
+    const parsed = JSON.parse(clean.slice(start, end + 1))
+    if (typeof parsed.response !== 'string') return null
+    return {
+      response: parsed.response,
+      feedback: typeof parsed.feedback === 'string' ? parsed.feedback : generateCannedFeedback(''),
+    }
+  } catch {
+    return null
+  }
+}
+
+async function tryGroqChat(systemPrompt: string, userPrompt: string): Promise<string | null> {
+  const apiKey = process.env.GROQ_API_KEY
+  if (!apiKey) return null
+  const MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'gemma2-9b-it']
+  for (const model of MODELS) {
+    try {
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+          temperature: 0.8,
+          max_tokens: 500,
+        }),
+        signal: AbortSignal.timeout(15000),
+      })
+      if (!res.ok) continue
+      const data = await res.json()
+      const text = data.choices?.[0]?.message?.content ?? ''
+      if (text) return text
+    } catch (err: any) {
+      console.error(`❌ Groq chat [${model}]:`, err.message)
+    }
+  }
+  return null
+}
+
+async function tryGeminiChat(systemPrompt: string, userPrompt: string): Promise<string | null> {
+  const apiKey = process.env.GEMINI_API_KEY
+  if (!apiKey) return null
+  const MODELS = ['gemini-2.5-flash-lite-preview-06-17', 'gemini-2.0-flash-lite', 'gemini-1.5-flash-8b', 'gemini-1.5-flash']
+  for (const model of MODELS) {
+    try {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }],
+            generationConfig: { temperature: 0.8, maxOutputTokens: 500 },
+          }),
+          signal: AbortSignal.timeout(15000),
+        }
+      )
+      if (!res.ok) continue
+      const data = await res.json()
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
+      if (text) return text
+    } catch (err: any) {
+      console.error(`❌ Gemini chat [${model}]:`, err.message)
+    }
+  }
+  return null
+}
+
+// ── Fallback: original canned/keyword-based logic (unchanged behavior) ─────
+
+function generateCannedResponse(userMessage: string, topic?: string): string {
   const lowerMessage = userMessage.toLowerCase()
 
-  // Topic-based responses
   if (topic) {
     const topicResponses: { [key: string]: string[] } = {
       'Daily Routine': [
@@ -85,23 +236,18 @@ function generateAIResponse(userMessage: string, topic?: string): string {
     return responses[Math.floor(Math.random() * responses.length)]
   }
 
-  // Keyword-based fallback
   if (lowerMessage.includes('weekend') || lowerMessage.includes('free')) {
     return 'That sounds interesting! Could you tell me more about what you enjoyed most about it?'
   }
-
   if (lowerMessage.includes('work') || lowerMessage.includes('job')) {
     return 'I see. How long have you been working there? Do you enjoy what you do?'
   }
-
   if (lowerMessage.includes('friend') || lowerMessage.includes('family')) {
     return 'That\'s wonderful! How often do you get to spend time with them?'
   }
-
   if (lowerMessage.includes('like') || lowerMessage.includes('enjoy')) {
     return 'That\'s great! What is it about that you enjoy the most?'
   }
-
   if (lowerMessage.includes('movie') || lowerMessage.includes('film')) {
     return 'Oh nice! What was your favorite scene? Would you recommend it to others?'
   }
@@ -109,7 +255,7 @@ function generateAIResponse(userMessage: string, topic?: string): string {
   return 'That\'s interesting! Could you tell me more about that?'
 }
 
-function generateFeedback(transcript: string): string {
+function generateCannedFeedback(transcript: string): string {
   const wordCount = transcript.split(/\s+/).filter(w => w.length > 0).length
   const sentenceCount = (transcript.match(/[.!?]/g) || []).length
   const hasQuestionMark = transcript.includes('?')
@@ -118,7 +264,7 @@ function generateFeedback(transcript: string): string {
   const uniqueWords = new Set(words.map(w => w.toLowerCase())).size
 
   let feedback = '✓ Good effort! Here\'s my feedback:\n\n'
-  
+
   if (wordCount < 5) {
     feedback += '• Response is too short - try to give longer answers (aim for 20+ words)\n'
   } else if (wordCount < 20) {
@@ -126,13 +272,13 @@ function generateFeedback(transcript: string): string {
   } else {
     feedback += '• ✓ Good response length!\n'
   }
-  
+
   if (!hasQuestionMark && sentenceCount > 0) {
     feedback += '• Try asking questions to keep the conversation flowing naturally\n'
   } else if (hasQuestionMark) {
     feedback += '• ✓ Great! You asked a question to keep the conversation going\n'
   }
-  
+
   if (!hasPunctuation) {
     feedback += '• Remember to use proper punctuation (.!?) to make your sentences clear\n'
   } else {
@@ -144,8 +290,8 @@ function generateFeedback(transcript: string): string {
   } else {
     feedback += '• ✓ Nice vocabulary variety!\n'
   }
-  
+
   feedback += '\nKeep practicing! Natural conversations improve with time.'
-  
+
   return feedback
 }

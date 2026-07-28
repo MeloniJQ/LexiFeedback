@@ -32,6 +32,7 @@ export async function POST(request: NextRequest) {
       contentMode = 'bullets',
       description = '',
       slideHeadings = [],
+      englishLevel = null,
     } = await request.json()
 
     if (!topic || !prompt) {
@@ -41,9 +42,9 @@ export async function POST(request: NextRequest) {
     const count = Math.min(Math.max(parseInt(slideCount) || 10, 3), 20)
 
     console.log('\n=== GENERATE PPT ===')
-    console.log('Topic:', topic, '| Slides:', count, '| Mode:', contentMode)
+    console.log('Topic:', topic, '| Slides:', count, '| Mode:', contentMode, '| Level:', englishLevel ?? 'n/a')
 
-    const slides = await generateSlides(topic, prompt, count, contentMode, description, slideHeadings)
+    const slides = await generateSlides(topic, prompt, count, contentMode, description, slideHeadings, englishLevel)
     console.log('Slide count:', slides.length)
 
     const slidesWithImages = await attachImages(slides, topic)
@@ -60,6 +61,25 @@ export async function POST(request: NextRequest) {
   }
 }
 
+// ── CEFR language complexity (Feature 1 → presentation content integration) ────
+// Scales the WORDING of slide text (vocabulary, sentence complexity) to the
+// presenter's assessed English level — the facts/topic depth stay the same,
+// only how densely/idiomatically they're phrased changes.
+function cefrLanguageClause(englishLevel: string | null): string {
+  if (!englishLevel) return ''
+  const level = String(englishLevel).toUpperCase()
+  const guidance: Record<string, string> = {
+    A1: 'Use very short sentences and the most common everyday words. No idioms. One simple fact per bullet.',
+    A2: 'Use short, simple sentences and common vocabulary. Avoid idioms and complex grammar.',
+    B1: 'Use clear, moderately simple sentences. Avoid dense jargon; explain any technical term briefly.',
+    B2: 'Normal presentation phrasing is fine — moderately complex sentences and standard idioms are OK.',
+    C1: 'Use fluent, professional English including idiomatic phrasing and nuanced sentence structures.',
+    C2: 'Use sophisticated, idiomatic, native-level professional English freely.',
+  }
+  if (!guidance[level]) return ''
+  return `\n5. LANGUAGE LEVEL: The presenter's English level is ${level}. Word every title, subtitle, bullet, and highlight so the LANGUAGE (not the facts) matches this level — ${guidance[level]} Keep facts/numbers precise regardless of level; only the phrasing changes.`
+}
+
 // ── Prompt builder ────────────────────────────────────────────────────────────
 function buildPrompt(
   topic: string,
@@ -67,7 +87,8 @@ function buildPrompt(
   slideCount: number,
   contentMode: string,
   description: string,
-  slideHeadings: string[]
+  slideHeadings: string[],
+  englishLevel: string | null = null
 ): string {
   const headingsInstruction = slideHeadings.length > 0
     ? `Use EXACTLY these slide titles in order: ${slideHeadings.map((h, i) => `${i + 1}. "${h}"`).join(', ')}. Fill remaining slides if fewer headings provided.`
@@ -91,7 +112,7 @@ STRICT RULES:
    - For a slide about "Saturn's Rings": imageQuery = "saturn rings planet space"
    - For a slide about "Climate Change glaciers": imageQuery = "glacier melting arctic aerial"
    - Make it visually specific so image search finds a stunning relevant photo
-4. ${contentInstruction}
+4. ${contentInstruction}${cefrLanguageClause(englishLevel)}
 
 ${headingsInstruction}
 
@@ -136,13 +157,13 @@ function parseSlides(rawText: string, topic: string): Slide[] | null {
 // ── Groq (primary, free) ──────────────────────────────────────────────────────
 async function tryGroq(
   topic: string, userPrompt: string, slideCount: number,
-  contentMode: string, description: string, slideHeadings: string[]
+  contentMode: string, description: string, slideHeadings: string[], englishLevel: string | null = null
 ): Promise<Slide[] | null> {
   const apiKey = process.env.GROQ_API_KEY
   if (!apiKey) return null
 
   const GROQ_MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'gemma2-9b-it']
-  const prompt = buildPrompt(topic, userPrompt, slideCount, contentMode, description, slideHeadings)
+  const prompt = buildPrompt(topic, userPrompt, slideCount, contentMode, description, slideHeadings, englishLevel)
 
   for (const model of GROQ_MODELS) {
     try {
@@ -173,7 +194,7 @@ async function tryGroq(
 // ── Gemini (fallback, free) ───────────────────────────────────────────────────
 async function tryGemini(
   topic: string, userPrompt: string, slideCount: number,
-  contentMode: string, description: string, slideHeadings: string[]
+  contentMode: string, description: string, slideHeadings: string[], englishLevel: string | null = null
 ): Promise<Slide[] | null> {
   const apiKey = process.env.GEMINI_API_KEY
   if (!apiKey) return null
@@ -184,7 +205,7 @@ async function tryGemini(
     'gemini-1.5-flash-8b',
     'gemini-1.5-flash',
   ]
-  const prompt = buildPrompt(topic, userPrompt, slideCount, contentMode, description, slideHeadings)
+  const prompt = buildPrompt(topic, userPrompt, slideCount, contentMode, description, slideHeadings, englishLevel)
 
   for (const model of GEMINI_MODELS) {
     try {
@@ -212,11 +233,11 @@ async function tryGemini(
 
 async function generateSlides(
   topic: string, userPrompt: string, slideCount: number,
-  contentMode: string, description: string, slideHeadings: string[]
+  contentMode: string, description: string, slideHeadings: string[], englishLevel: string | null = null
 ): Promise<Slide[]> {
   const slides =
-    (await tryGroq(topic, userPrompt, slideCount, contentMode, description, slideHeadings)) ??
-    (await tryGemini(topic, userPrompt, slideCount, contentMode, description, slideHeadings))
+    (await tryGroq(topic, userPrompt, slideCount, contentMode, description, slideHeadings, englishLevel)) ??
+    (await tryGemini(topic, userPrompt, slideCount, contentMode, description, slideHeadings, englishLevel))
   if (slides) return slides
   console.error('❌ All providers failed')
   return buildFallback(topic, slideCount)

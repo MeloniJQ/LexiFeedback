@@ -181,6 +181,7 @@ def generate_questions_from_resume(
     key_skills: str = "",
     asked_questions: list[str] | None = None,
     num_questions: int = 5,
+    english_level: str | None = None,
 ) -> list[dict]:
 
     context = build_interview_context(
@@ -190,6 +191,7 @@ def generate_questions_from_resume(
         job_description=job_description,
         key_skills=key_skills,
         asked_questions=asked_questions,
+        english_level=english_level,
     )
 
     num_questions = max(1, min(num_questions, 20))

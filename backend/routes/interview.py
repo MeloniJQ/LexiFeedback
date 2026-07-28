@@ -14,7 +14,7 @@ Kept for backward compat:
 """
 
 from flask import Blueprint, request, jsonify
-from models import db, PracticeSession, InterviewProgress
+from models import db, PracticeSession, InterviewProgress, User
 from services.ai_service import (
     generate_questions_from_resume,
     generate_followup_question,
@@ -118,6 +118,16 @@ def start_interview(payload):
         # Validate num_questions
         num_questions = max(1, min(num_questions, 20))
 
+        # CEFR level (Feature 1 → Feature 2 integration): question phrasing
+        # (vocabulary/sentence complexity) scales to the candidate's assessed
+        # English level. This is about LANGUAGE difficulty, not technical
+        # difficulty — the role/company/resume context still drives subject
+        # matter; english_level only changes how the question is worded.
+        english_level = None
+        user = User.query.get(payload["user_id"])
+        if user and user.english_level:
+            english_level = user.english_level
+
         # ── Extract resume text ──────────────────────────────────────────────
         resume_text = ""
         if resume_file and resume_file.filename:
@@ -133,6 +143,7 @@ def start_interview(payload):
             key_skills      = key_skills,
             asked_questions = asked_questions,
             num_questions   = num_questions,
+            english_level   = english_level,
         )
 
         return jsonify({

@@ -55,6 +55,7 @@ export default function AssessmentPage() {
   const [readingAnswers, setReadingAnswers] = useState<number[]>([])
   const [listeningAnswers, setListeningAnswers] = useState<number[]>([])
   const [hasPlayedListening, setHasPlayedListening] = useState(false)
+  const [isSpeaking, setIsSpeaking] = useState(false)
 
   const [readaloudTranscript, setReadaloudTranscript] = useState('')
   const [openIdx, setOpenIdx] = useState(0)
@@ -192,14 +193,28 @@ export default function AssessmentPage() {
       window.speechSynthesis.cancel()
       const utter = new SpeechSynthesisUtterance(pkg.listening.script)
       utter.rate = 0.95
-      utter.onend = () => setHasPlayedListening(true)
+      utter.onstart = () => setIsSpeaking(true)
+      utter.onend = () => { setIsSpeaking(false); setHasPlayedListening(true) }
+      utter.onerror = () => setIsSpeaking(false)
       window.speechSynthesis.speak(utter)
     } catch {
       // speechSynthesis unsupported — let them read the transcript-free
       // question anyway rather than block the whole assessment.
+      setIsSpeaking(false)
       setHasPlayedListening(true)
     }
   }
+
+  const stopListening = () => {
+    window.speechSynthesis.cancel()
+    setIsSpeaking(false)
+  }
+
+  // Safety net: never leave speech synthesis running if the user navigates
+  // away or the component unmounts mid-playback.
+  useEffect(() => {
+    return () => { window.speechSynthesis.cancel() }
+  }, [])
 
   const stepIndex = STEP_ORDER.indexOf(step)
   const progressPct = stepIndex >= 0 ? Math.round(((stepIndex) / STEP_ORDER.length) * 100) : 0
@@ -291,9 +306,24 @@ export default function AssessmentPage() {
           <SectionHeader icon={<Headphones className="text-[#2C5AA0]" />} title="Listening" />
           <div className="bg-[#F9FAFB] dark:bg-[#1E293B] rounded-xl p-6 mb-6 text-center">
             <h3 className="font-semibold mb-4">{pkg.listening.title}</h3>
-            <Button onClick={speakListening} variant="outline">
-              ▶ Play Audio
-            </Button>
+            {!isSpeaking ? (
+              <Button onClick={speakListening} variant="outline">
+                ▶ Play Audio
+              </Button>
+            ) : (
+              <div className="flex flex-col items-center gap-3">
+                <div className="flex items-center gap-2 text-[#2C5AA0] text-sm font-medium">
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#2C5AA0] opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#2C5AA0]" />
+                  </span>
+                  Playing audio…
+                </div>
+                <Button onClick={stopListening} variant="destructive">
+                  <Square className="mr-2 h-4 w-4" /> Stop Audio
+                </Button>
+              </div>
+            )}
             <p className="text-xs text-[#6B7280] dark:text-gray-400 mt-3">
               You can replay it as many times as you like before answering.
             </p>
@@ -307,7 +337,7 @@ export default function AssessmentPage() {
               next[qi] = oi
               setListeningAnswers(next)
             }}
-            onContinue={goNext}
+            onContinue={() => { stopListening(); goNext() }}
           />
         </div>
       )}
@@ -502,6 +532,20 @@ function RecorderControls({
   micError: string
   onDone: () => void
 }) {
+  // Safety net: auto-stop after 3 minutes so a recording can never run
+  // away indefinitely even if something else goes wrong in the UI.
+  useEffect(() => {
+    if (recorder.state !== 'recording') return
+    if (recorder.durationMs > 3 * 60 * 1000) {
+      recorder.stopRecording()
+    }
+  }, [recorder.state, recorder.durationMs])
+
+  const fmtTime = (ms: number) => {
+    const s = Math.floor(ms / 1000)
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+  }
+
   return (
     <div className="text-center">
       {(recorder.state === 'error' || micError) && (
@@ -525,14 +569,28 @@ function RecorderControls({
 
       {recorder.state === 'recording' && (
         <div>
+          <div className="flex items-center justify-center gap-2 mb-3">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500" />
+            </span>
+            <span className="text-sm font-mono font-medium text-red-600">
+              {fmtTime(recorder.durationMs)}
+            </span>
+          </div>
           <div className="mb-4 h-2 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden max-w-xs mx-auto">
             <div
               className="h-full bg-[#2C5AA0] transition-all"
               style={{ width: `${recorder.audioLevel}%` }}
             />
           </div>
-          <Button size="lg" variant="destructive" onClick={recorder.stopRecording}>
-            <Square className="mr-2 h-4 w-4" /> Stop Recording
+          <Button
+            size="lg"
+            variant="destructive"
+            onClick={recorder.stopRecording}
+            className="w-full sm:w-auto min-w-[220px] text-base font-semibold shadow-md"
+          >
+            <Square className="mr-2 h-5 w-5" /> Stop Recording
           </Button>
         </div>
       )}
