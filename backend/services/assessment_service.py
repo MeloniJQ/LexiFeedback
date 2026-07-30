@@ -26,7 +26,7 @@ import random
 import re
 from concurrent.futures import ThreadPoolExecutor
 
-from services.ai_service import generate_ai_passage, analyze_pronunciation, _chat, _clean_json_text
+from services.ai_service import generate_ai_passage, analyze_pronunciation, _chat, _clean_json_text, _fallback_passage
 from utils.cefr import CEFR_LEVELS, score_to_level
 
 logger = logging.getLogger("lexifeed.assessment_service")
@@ -123,17 +123,13 @@ def build_assessment() -> dict:
     random.shuffle(grammar_items)
     random.shuffle(vocabulary_items)
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        reading_future = pool.submit(generate_ai_passage, difficulty="intermediate", mode="standard")
-        listening_future = pool.submit(generate_ai_passage, difficulty="intermediate", mode="journalist")
-        reading_passage = reading_future.result()
-        listening_script = listening_future.result()
+    # Use fast fallbacks for the initial placement assessment to avoid AI timeouts
+    # and ensure instant loading for brand-new users.
+    reading_passage = _fallback_passage("intermediate", "standard")
+    listening_script = _fallback_passage("intermediate", "journalist")
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        reading_q_future = pool.submit(_generate_comprehension_questions, reading_passage.get("content", ""))
-        listening_q_future = pool.submit(_generate_comprehension_questions, listening_script.get("content", ""))
-        reading_questions = reading_q_future.result()
-        listening_questions = listening_q_future.result()
+    reading_questions = _fallback_comprehension_from_passage(reading_passage.get("content", ""))
+    listening_questions = _fallback_comprehension_from_passage(listening_script.get("content", ""))
 
     speaking_sentence = random.choice(SPEAKING_READALOUD_SENTENCES)
     speaking_questions = random.sample(SPEAKING_OPEN_QUESTIONS, k=2)

@@ -7,6 +7,7 @@ LexiFeed is a full-stack web application that helps users practice English inter
 ## Key Features
 
 - **Secure auth** with JWT-based login/signup.
+- **CEFR Initial English Level Assessment** — instantly places new users in the right difficulty band (A1-C2) using fast static content for zero-latency onboarding.
 - **AI-powered interview question generation** from company, role, resume context, and a planner-generated interview blueprint.
 - **Agentic interview analysis** — context-aware answer evaluation that tracks patterns and competency development across a full session.
 - **Voice transcription and analysis** for spoken answers (local, free transcription via faster-whisper), covering both content and delivery (filler words, pace, structure).
