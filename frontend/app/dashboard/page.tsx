@@ -1,9 +1,10 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { Briefcase, Presentation, MessageCircle, Book, TrendingUp, Target, Brain, Sparkles, ShieldCheck } from 'lucide-react'
 import { PracticeModeCard } from '@/components/practice-mode-card'
-import { getUser } from '@/lib/auth'
+import { getUser, getCurrentUser, setAuth, getToken, type User } from '@/lib/auth'
 
 const CEFR_LABELS: Record<string, string> = {
   A1: 'Beginner', A2: 'Elementary', B1: 'Intermediate',
@@ -11,7 +12,19 @@ const CEFR_LABELS: Record<string, string> = {
 }
 
 export default function DashboardPage() {
-  const user = getUser()
+  const [user, setUser] = useState<User | null>(() => getUser())
+
+  useEffect(() => {
+    // Re-fetch from the server so this badge can't show a stale level —
+    // the cached copy is only as fresh as the last setAuth() call.
+    getCurrentUser().then((fresh) => {
+      if (fresh) {
+        setUser(fresh)
+        const token = getToken()
+        if (token) setAuth(token, fresh)
+      }
+    })
+  }, [])
 
   const practiceModes = [
     {

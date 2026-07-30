@@ -4,7 +4,12 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Save } from 'lucide-react'
-import { getUser } from '@/lib/auth'
+import { getUser, getCurrentUser, setAuth, getToken, type User } from '@/lib/auth'
+
+const CEFR_LABELS: Record<string, string> = {
+  A1: 'Beginner', A2: 'Elementary', B1: 'Intermediate',
+  B2: 'Upper Intermediate', C1: 'Advanced', C2: 'Proficient',
+}
 
 export default function SettingsPage() {
   const router = useRouter()
@@ -15,28 +20,46 @@ export default function SettingsPage() {
     education: '',
     language: 'English (US)',
     difficulty: 'Intermediate',
-    englishLevel: '',
     notifications: true,
     emailUpdates: false,
   })
+  const [assessment, setAssessment] = useState<User | null>(null)
 
   const [saved, setSaved] = useState(false)
 
   useEffect(() => {
-    const storedUser = getUser()
-    if (!storedUser) {
+    // Always re-fetch from the server rather than trusting whatever is
+    // cached in sessionStorage — that cache can go stale (e.g. it's only
+    // refreshed at login or right after finishing the assessment; if this
+    // tab was already open, or the write happened but this page had an
+    // older snapshot) and this is the page people check to confirm their
+    // result actually saved, so it needs to be authoritative.
+    const cachedUser = getUser()
+    if (!cachedUser) {
       router.replace('/login')
       return
     }
 
-    setSettings((prev) => ({
-      ...prev,
-      fullName: storedUser.full_name || '',
-      email: storedUser.email || '',
-      age: storedUser.age ? String(storedUser.age) : '',
-      education: storedUser.education || '',
-      englishLevel: storedUser.english_level || '',
-    }))
+    const applyUser = (u: User) => {
+      setSettings((prev) => ({
+        ...prev,
+        fullName: u.full_name || '',
+        email: u.email || '',
+        age: u.age ? String(u.age) : '',
+        education: u.education || '',
+      }))
+      setAssessment(u)
+    }
+
+    applyUser(cachedUser) // show something immediately, then refresh below
+
+    getCurrentUser().then((fresh) => {
+      if (fresh) {
+        applyUser(fresh)
+        const token = getToken()
+        if (token) setAuth(token, fresh) // keep the cache in sync going forward
+      }
+    })
   }, [router])
 
   const handleChange = (field: string, value: any) => {
@@ -166,13 +189,58 @@ export default function SettingsPage() {
               <h2 className="text-lg font-semibold text-[#1F2937] dark:text-white mb-2">
                 English Level Assessment
               </h2>
-              <p className="text-sm text-[#6B7280] dark:text-gray-400 mb-4">
-                {settings.englishLevel
-                  ? `Your current level: ${settings.englishLevel}. Retake the assessment any time your English has improved — every practice mode adjusts automatically.`
-                  : 'Take the CEFR placement test to unlock level-appropriate practice content.'}
-              </p>
+
+              {assessment?.assessment_completed && assessment.english_level ? (
+                <>
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="text-3xl font-bold text-[#2C5AA0]">{assessment.english_level}</div>
+                    <div>
+                      <p className="font-medium text-[#1F2937] dark:text-white">
+                        {CEFR_LABELS[assessment.english_level] ?? ''}
+                      </p>
+                      {assessment.assessment_date && (
+                        <p className="text-xs text-[#6B7280] dark:text-gray-400">
+                          Assessed {new Date(assessment.assessment_date).toLocaleDateString()}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                    {[
+                      ['Grammar', assessment.grammar_score],
+                      ['Vocabulary', assessment.vocabulary_score],
+                      ['Reading', assessment.reading_score],
+                      ['Listening', assessment.listening_score],
+                      ['Speaking', assessment.speaking_score],
+                      ['Pronunciation', assessment.pronunciation_score],
+                      ['Fluency', assessment.fluency_score],
+                      ['Overall', assessment.overall_score],
+                    ].map(([label, value]) => (
+                      <div
+                        key={label as string}
+                        className="rounded-lg p-3 border border-gray-100 dark:border-gray-700 bg-[#F9FAFB] dark:bg-[#111827]"
+                      >
+                        <p className="text-xs text-[#6B7280] dark:text-gray-400">{label}</p>
+                        <p className="text-lg font-semibold text-[#1F2937] dark:text-white">
+                          {value != null ? Math.round(value as number) : '—'}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+
+                  <p className="text-sm text-[#6B7280] dark:text-gray-400 mb-4">
+                    Every practice mode adjusts to this level automatically. Retake any time your English has improved.
+                  </p>
+                </>
+              ) : (
+                <p className="text-sm text-[#6B7280] dark:text-gray-400 mb-4">
+                  Take the CEFR placement test to unlock level-appropriate practice content.
+                </p>
+              )}
+
               <Button variant="outline" onClick={() => router.push('/assessment')}>
-                {settings.englishLevel ? 'Retake Assessment' : 'Take Assessment'}
+                {assessment?.assessment_completed ? 'Retake Assessment' : 'Take Assessment'}
               </Button>
             </div>
 
