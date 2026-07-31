@@ -20,6 +20,7 @@ from routes.modes import modes_bp
 from routes.health import health_bp
 from routes.vocabulary import vocabulary_bp
 from routes.goals import goals_bp
+from routes.conversation import conversation_bp
 
 import sys
 import os
@@ -70,6 +71,7 @@ app.register_blueprint(modes_bp, url_prefix="/api/modes")
 app.register_blueprint(health_bp, url_prefix="/api")
 app.register_blueprint(vocabulary_bp, url_prefix="/api/vocabulary")
 app.register_blueprint(goals_bp, url_prefix="/api/goals")
+app.register_blueprint(conversation_bp, url_prefix="/api/practice/conversation")
 
 @app.route("/", methods=["GET"])
 def root():
@@ -83,4 +85,4 @@ with app.app_context():
     db.create_all()
 
 if __name__ == "__main__":
-    app.run(debug=True, use_reloader=False, port=5000, host="0.0.0.0")
+    app.run(debug=True, use_reloader=False, port=5000, host="0.0.0.0", threaded=True)
