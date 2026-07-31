@@ -11,6 +11,8 @@ import {
   Wand2, ChevronLeft, ChevronRight, Loader2, Download, Plus, X
 } from 'lucide-react'
 
+import { getUser } from '@/lib/auth'
+
 interface Slide {
   title: string
   bullets: string[]
@@ -265,6 +267,7 @@ export default function PresentationPracticePage() {
           contentMode,
           description: description.trim(),
           slideHeadings: headings,
+          englishLevel: getUser()?.english_level ?? null,
         }),
       })
       const data = await res.json()

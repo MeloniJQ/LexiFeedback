@@ -7,6 +7,7 @@ LexiFeed is a full-stack web application that helps users practice English inter
 ## Key Features
 
 - **Secure auth** with JWT-based login/signup.
+- **CEFR Initial English Level Assessment** — instantly places new users in the right difficulty band (A1-C2) using fast static content for zero-latency onboarding.
 - **AI-powered interview question generation** from company, role, resume context, and a planner-generated interview blueprint.
 - **Agentic interview analysis** — context-aware answer evaluation that tracks patterns and competency development across a full session.
 - **Voice transcription and analysis** for spoken answers (local, free transcription via faster-whisper), covering both content and delivery (filler words, pace, structure).
@@ -117,13 +118,13 @@ LexiFeed/
 
    # Used by the backend/agents/ pipeline via the AI_PROVIDER abstraction
    AI_PROVIDER=openrouter
-   AI_MODEL=meta-llama/llama-3.3-70b-instruct:free
+   AI_MODEL=openrouter/free
    OPENROUTER_API_KEY=your_openrouter_api_key_here
    OLLAMA_API_URL=http://127.0.0.1:11434
    ```
 
    > Get a free Gemini API key at https://aistudio.google.com/app/apikey
-   > Get a free OpenRouter API key at https://openrouter.ai/keys — the default model `meta-llama/llama-3.3-70b-instruct:free` requires no credit card. Browse other free models (`:free` suffix) at https://openrouter.ai/models?supported_parameters=free
+   > Get a free OpenRouter API key at https://openrouter.ai/keys — `openrouter/free` is OpenRouter's own auto-router, which picks whichever free model currently has capacity (recommended over pinning a single popular free model like `meta-llama/llama-3.3-70b-instruct:free`, which gets rate-limited across all OpenRouter users during busy periods). No credit card required. Browse individual free models (`:free` suffix) at https://openrouter.ai/models?supported_parameters=free
 
 5. Start the backend server:
 
@@ -218,8 +219,13 @@ The frontend stores the returned JWT token and sends it in the `Authorization: B
 - `POST /api/auth/login`
 - `GET /api/auth/me`
 
+### CEFR Initial Assessment
+- `GET /api/assessment/status` — Whether the current user has completed the placement test.
+- `GET /api/assessment/start` — Builds a 5-part placement test (grammar, vocabulary, reading, listening, speaking) mixing a static item bank with AI-generated passages.
+- `POST /api/assessment/submit` — Scores the completed test and stores the resulting CEFR level (A1-C2) on the user's profile.
+
 ### Interview Workflows
-- `POST /api/interview/start` — Starts a new interview session and returns AI-generated questions. Supports multipart form data and optional resume upload.
+- `POST /api/interview/start` — Starts a new interview session and returns AI-generated questions. Supports multipart form data, an optional resume upload, and an optional `num_questions` field (1-20, default 5) to control how many questions are generated.
 - `POST /api/interview/questions/generate` — Generates a blueprint-backed interview question set from the latest plan and candidate profile.
 - `GET /api/interview/questions` — Lists generated questions for the current candidate profile.
 - `GET /api/interview/questions/<question_id>` — Fetches a single stored generated question.
@@ -227,6 +233,9 @@ The frontend stores the returned JWT token and sends it in the `Authorization: B
 - `POST /api/interview/feedback` — Saves interview transcript and returns AI feedback.
 - `GET /api/interview/sessions` — Retrieves a user's saved session history.
 - `GET /api/interview/stats` — Returns aggregated progress metrics and streak data.
+- `POST /api/interview/progress/save` — Upserts an in-progress interview session (questions, answered Q&A pairs, current position) so a page refresh mid-interview doesn't lose progress.
+- `GET /api/interview/progress/active` — Returns the user's most recent in-progress attempt, used to show a "Resume / Start Fresh" prompt.
+- `DELETE /api/interview/progress/<session_key>` — Discards a saved in-progress attempt.
 - `POST /api/interview/generate` / `POST /api/interview/upload-resume` — Legacy endpoints.
 
 ### Candidate Intelligence
@@ -244,6 +253,8 @@ The frontend stores the returned JWT token and sends it in the `Authorization: B
 
 ### Reading Practice
 - Routes under `/api/practice/reading` — see `backend/routes/reading.py` for AI passage/news-script generation and pronunciation analysis.
+- Passage generation accepts `level` (CEFR) and `length` (`short`/`medium`/`long`); `level` defaults to the requesting user's assessed CEFR level when not passed explicitly.
+- Every generated passage is logged to `ReadingPassageHistory`, and the last 15 titles (mode-matched, 30-day window) are excluded from future generations to avoid repeats.
 
 ### Vocabulary
 - `GET /api/vocabulary` — List the current user's saved words/idioms/phrases, newest first.
@@ -358,6 +369,29 @@ python app.py
 
 ---
 
+## Testing
+
+Unit and integration tests for the production-ready interview platform features live in `backend/tests/` (`test_production_features.py`, `test_candidate_intelligence.py`, `test_interview_planning.py`). Run them from the `backend/` directory with your virtual environment active:
+
+```bash
+cd backend
+python -m pytest tests/
+```
+
+`backend/templates/` is reserved for deployment/documentation templates for production use and is currently empty.
+
+---
+
+## Known Limitations
+
+- **Assessment answer keys** are cached in an in-process dict (`routes/assessment.py`), keyed by user ID. This works for a single-process deployment; a multi-worker/multi-process production deploy should move this to the database or Redis so `/api/assessment/start` and `/api/assessment/submit` always hit the same process.
+- **Interview progress resume** restores state to right after the last *completed* answer. An in-progress follow-up exchange mid-chain isn't separately persisted, so refreshing mid-follow-up drops that one follow-up round (the main answer and its analysis are still saved).
+- **Voice transcription** (`transcribe_audio` in `voice_service.py`) uses local `faster-whisper` and needs no API key, but text-based follow-up/analysis for voice answers still goes through the configured `AI_PROVIDER`.
+- The `backend/agents/` and orchestrator pipeline (blueprint planner, evaluation agent, recommendation agent) is reachable via `/api/interview/plan/*` and `/api/interview/session/*`, but the primary practice page (`/practice/interview`) uses the simpler, self-contained flow described above rather than this orchestrator — worth an audit before relying on the orchestrator end-to-end.
+- **OpenRouter free-tier rate limits**: if you see repeated fallback/template content instead of real AI responses, you may be hitting OpenRouter's free-tier cap (20 requests/min, 50/day without adding credit; 1,000/day once a one-time $10 balance is added). Setting `AI_MODEL=openrouter/free` lets OpenRouter auto-route to whichever free model currently has capacity, instead of hammering a single congested model. See https://openrouter.ai/docs/api-reference/limits for current numbers.
+
+---
+
 ## Contributing
 
 Fork the repository, create a branch, implement your changes, and open a pull request with a clear description. Keep backend and frontend changes separate when possible.
@@ -368,4 +402,4 @@ You can view the project demonstration videos using the Google Drive link below:
 
 🔗[ https://drive.google.com/drive/folders/1wMZ62Scx87hwHFD8_HgB3Xq5Kzr6kPns?usp=sharing](https://drive.google.com/drive/folders/1wMZ62Scx87hwHFD8_HgB3Xq5Kzr6kPns?usp=sharing)
 
-The folder contains screen recordings demonstrating the key features and workflow of the project.
+

@@ -6,6 +6,17 @@ export interface User {
   full_name: string
   age?: number
   education?: string
+  english_level?: string | null
+  assessment_completed?: boolean
+  assessment_date?: string | null
+  overall_score?: number | null
+  grammar_score?: number | null
+  vocabulary_score?: number | null
+  pronunciation_score?: number | null
+  fluency_score?: number | null
+  speaking_score?: number | null
+  reading_score?: number | null
+  listening_score?: number | null
 }
 
 export interface AuthResponse {

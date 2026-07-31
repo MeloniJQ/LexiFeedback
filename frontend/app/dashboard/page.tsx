@@ -3,8 +3,16 @@
 import Link from 'next/link'
 import { Briefcase, Presentation, MessageCircle, Book, TrendingUp, Target, Brain, Sparkles, ShieldCheck } from 'lucide-react'
 import { PracticeModeCard } from '@/components/practice-mode-card'
+import { getUser } from '@/lib/auth'
+
+const CEFR_LABELS: Record<string, string> = {
+  A1: 'Beginner', A2: 'Elementary', B1: 'Intermediate',
+  B2: 'Upper Intermediate', C1: 'Advanced', C2: 'Proficient',
+}
 
 export default function DashboardPage() {
+  const user = getUser()
+
   const practiceModes = [
     {
       title: 'Agentic Interview',
@@ -39,9 +47,20 @@ export default function DashboardPage() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-4xl font-bold text-[#1F2937] dark:text-white mb-2">
-          LexiFeed Interview Command Center
-        </h1>
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+          <h1 className="text-4xl font-bold text-[#1F2937] dark:text-white">
+            LexiFeed Interview Command Center
+          </h1>
+          {user?.english_level && (
+            <Link
+              href="/dashboard/settings"
+              className="flex items-center gap-2 rounded-full border border-[#2C5AA0]/30 bg-[#2C5AA0]/10 px-4 py-1.5 text-sm font-medium text-[#2C5AA0] hover:bg-[#2C5AA0]/20 transition"
+              title="Every practice mode is tailored to this level. Click to retake the assessment."
+            >
+              English Level: {user.english_level} · {CEFR_LABELS[user.english_level] ?? ''}
+            </Link>
+          )}
+        </div>
         <p className="text-[#6B7280] dark:text-gray-400 text-lg">
           Prepare for Google, Microsoft, Amazon, Meta, and beyond with AI-generated reports and coaching.
         </p>

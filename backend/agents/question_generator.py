@@ -125,7 +125,7 @@ def _normalize_questions(raw: list[dict[str, Any]], count: int, blueprint: dict[
         unique_texts.add(key)
 
         normalized.append({
-            "question_id": str(item.get("id") or item.get("question_id") or uuid.uuid4()),
+            "question_id": str(uuid.uuid4()),
             "question_text": text,
             "category": item.get("category") or "Core Technical",
             "topic": item.get("topic") or item.get("project") or "General",

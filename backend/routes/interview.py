@@ -14,7 +14,7 @@ Kept for backward compat:
 """
 
 from flask import Blueprint, request, jsonify
-from models import db, PracticeSession
+from models import db, PracticeSession, InterviewProgress, User
 from services.ai_service import (
     generate_questions_from_resume,
     generate_followup_question,
@@ -118,6 +118,16 @@ def start_interview(payload):
         # Validate num_questions
         num_questions = max(1, min(num_questions, 20))
 
+        # CEFR level (Feature 1 → Feature 2 integration): question phrasing
+        # (vocabulary/sentence complexity) scales to the candidate's assessed
+        # English level. This is about LANGUAGE difficulty, not technical
+        # difficulty — the role/company/resume context still drives subject
+        # matter; english_level only changes how the question is worded.
+        english_level = None
+        user = User.query.get(payload["user_id"])
+        if user and user.english_level:
+            english_level = user.english_level
+
         # ── Extract resume text ──────────────────────────────────────────────
         resume_text = ""
         if resume_file and resume_file.filename:
@@ -133,6 +143,7 @@ def start_interview(payload):
             key_skills      = key_skills,
             asked_questions = asked_questions,
             num_questions   = num_questions,
+            english_level   = english_level,
         )
 
         return jsonify({
@@ -247,6 +258,94 @@ def get_session_feedback(payload):
             "session": session_record.to_dict(),
         }), 201
 
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Autosave / resume-on-refresh (Feature 2)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# The frontend generates a `session_key` (uuid) once, when the user starts an
+# interview, and POSTs the full running snapshot here immediately after every
+# answer is scored — *before* advancing to the next question. If the page is
+# refreshed, GET /progress/<session_key> (or /progress/active) returns that
+# snapshot so previously-answered questions are never lost.
+
+@interview_bp.route("/progress/save", methods=["POST"])
+@token_required
+def save_progress(payload):
+    """
+    Body (JSON):
+      {
+        "session_key": "uuid-...",
+        "company": "...",
+        "role": "...",
+        "snapshot": { ...arbitrary JSON: questions, pairs, currentIdx, etc... },
+        "status": "in_progress" | "completed"   (optional, default "in_progress")
+      }
+    Upserts — safe to call after every single answer.
+    """
+    try:
+        data = request.json or {}
+        session_key = (data.get("session_key") or "").strip()
+        if not session_key:
+            return jsonify({"error": "session_key is required"}), 400
+
+        record = InterviewProgress.query.filter_by(
+            user_id=payload["user_id"], session_key=session_key
+        ).first()
+
+        if not record:
+            record = InterviewProgress(user_id=payload["user_id"], session_key=session_key)
+            db.session.add(record)
+
+        record.company = data.get("company")
+        record.role = data.get("role")
+        record.snapshot = data.get("snapshot", {})
+        record.status = data.get("status", "in_progress")
+
+        db.session.commit()
+        return jsonify({"message": "Progress saved", "session_key": session_key}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        print(f"[interview/progress/save] Route error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@interview_bp.route("/progress/active", methods=["GET"])
+@token_required
+def get_active_progress(payload):
+    """Returns the user's most recent in-progress interview, if any — used
+    on page load to offer a 'resume?' prompt without the client needing to
+    already know a session_key (e.g. right after a refresh)."""
+    try:
+        record = (
+            InterviewProgress.query
+            .filter_by(user_id=payload["user_id"], status="in_progress")
+            .order_by(InterviewProgress.updated_at.desc())
+            .first()
+        )
+        return jsonify({"progress": record.to_dict() if record else None}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@interview_bp.route("/progress/<session_key>", methods=["DELETE"])
+@token_required
+def discard_progress(payload, session_key):
+    """Marks a saved attempt as abandoned (used when the user chooses 'Start
+    Fresh' instead of resuming, or after the interview completes normally)."""
+    try:
+        record = InterviewProgress.query.filter_by(
+            user_id=payload["user_id"], session_key=session_key
+        ).first()
+        if record:
+            record.status = "abandoned"
+            db.session.commit()
+        return jsonify({"message": "Discarded"}), 200
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": str(e)}), 500

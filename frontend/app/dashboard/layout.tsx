@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Sidebar } from '@/components/layout/sidebar'
 import { Header } from '@/components/layout/header'
-import { getToken } from '@/lib/auth'
+import { getToken, getCurrentUser } from '@/lib/auth'
 import { WordOfDayModal } from '@/components/word-of-day-modal'
 
 export default function DashboardLayout({
@@ -21,7 +21,16 @@ export default function DashboardLayout({
       router.replace('/login')
       return
     }
-    setChecking(false)
+
+    // Gate the dashboard on the CEFR placement test (Feature 1) — this
+    // covers direct navigation/bookmarks/refresh, not just the login flow.
+    getCurrentUser().then((user) => {
+      if (user && !user.assessment_completed) {
+        router.replace('/assessment')
+        return
+      }
+      setChecking(false)
+    })
   }, [router])
 
   if (checking) {

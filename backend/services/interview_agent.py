@@ -5,6 +5,46 @@ import re
 import uuid
 from datetime import datetime, timezone
 
+from utils.cefr import CEFR_LABELS, normalize_level
+
+
+def _cefr_language_clause(english_level: str | None) -> str:
+    """
+    Builds a RULES-section clause that scales question *wording* (vocabulary,
+    sentence complexity) to the candidate's assessed CEFR English level,
+    without changing the underlying technical/subject-matter difficulty —
+    a candidate can be a senior engineer and still be an A2 English speaker.
+    Returns "" when no level is known, leaving the existing default tone
+    (a normal professional interviewer) completely unchanged.
+    """
+    if not english_level:
+        return ""
+
+    level = normalize_level(english_level)
+    label = CEFR_LABELS.get(level, "")
+
+    guidance = {
+        "A1": "Use very short sentences and the most common, everyday words. Avoid idioms, "
+              "phrasal verbs, and multi-clause sentences entirely. One simple idea per question.",
+        "A2": "Use short, simple sentences and common vocabulary. Avoid idioms and complex "
+              "grammar (e.g. avoid conditionals and passive voice where possible).",
+        "B1": "Use clear, moderately simple sentences. Some job-relevant terminology is fine, "
+              "but avoid dense jargon strings and keep each question to one main idea.",
+        "B2": "Normal professional interview phrasing is fine — this is close to the default "
+              "tone. You may use standard idioms and moderately complex sentence structures.",
+        "C1": "Use natural, fluent professional English, including idiomatic phrasing and "
+              "nuanced, multi-clause questions where appropriate — as with a native-level hire.",
+        "C2": "Use sophisticated, idiomatic, native-level professional English freely, including "
+              "nuanced phrasing, subtext, and complex multi-part questions where natural.",
+    }.get(level, "")
+
+    return (
+        f"- CANDIDATE'S ENGLISH LEVEL: {level} ({label}). Word every question so its LANGUAGE "
+        f"(not its subject-matter difficulty) matches this level — {guidance} The technical "
+        f"depth of what's being asked should still match the role/seniority; only the phrasing "
+        f"changes."
+    )
+
 
 QUESTION_TYPES = [
     "behavioral",
@@ -56,6 +96,7 @@ def build_interview_context(
     job_description: str = "",
     key_skills: str = "",
     asked_questions: list[str] | None = None,
+    english_level: str | None = None,
 ) -> dict:
 
     clean_company = _clean_label(company, "the company")
@@ -96,6 +137,7 @@ def build_interview_context(
         "asked_questions": asked_questions or [],
         "session_seed": seed,
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "english_level": english_level,
     }
 
 
@@ -113,6 +155,8 @@ def build_question_generation_prompt(context: dict, num_questions: int = 10) -> 
     n_resume = max(1, round(num_questions * 0.2))
     n_situational = max(1, round(num_questions * 0.2))
     n_culture = max(1, num_questions - 1 - n_technical - n_resume - n_situational)
+
+    language_level_clause = _cefr_language_clause(context.get("english_level"))
 
     system = (
         "You are a senior technical interviewer with 10+ years of experience running real "
@@ -161,6 +205,7 @@ RULES
 - Each question is 1-3 sentences, professional interviewer tone.
 - "hint" is a 1-sentence coaching tip on how to structure a strong answer (e.g. STAR method for
   behavioral/situational, trade-off reasoning for technical).
+{language_level_clause}
 
 Return ONLY a JSON array in this exact shape, with ids 1..{num_questions} in interview order:
 [

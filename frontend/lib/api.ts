@@ -26,7 +26,7 @@ export const API_URL = API
 
 // ─── Core fetch wrapper ───────────────────────────────────────────────────────
 
- export async function apiCall(url: string, options: RequestInit = {}) {
+ export async function apiCall(url: string, options: RequestInit & { timeoutMs?: number } = {}) {
   const token = getToken()
   const headers = {
     'Content-Type': 'application/json',
@@ -34,7 +34,30 @@ export const API_URL = API
   } as Record<string, string>
   if (token) headers.Authorization = `Bearer ${token}`
 
-  const response = await fetch(url, { ...options, headers })
+  const { timeoutMs, ...fetchOptions } = options
+
+  let response: Response
+  if (timeoutMs) {
+    // Some backend calls (e.g. the CEFR assessment) chain several live AI
+    // generations server-side and can genuinely take a while — but the UI
+    // should never spin forever if a provider stalls. Abort and surface a
+    // clear, retryable error instead of an indefinite spinner.
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      response = await fetch(url, { ...fetchOptions, headers, signal: controller.signal })
+    } catch (e: any) {
+      if (e.name === 'AbortError') {
+        throw new Error("This is taking longer than expected. Please try again — it may just be a busy moment for the AI provider.")
+      }
+      throw e
+    } finally {
+      clearTimeout(timer)
+    }
+  } else {
+    response = await fetch(url, { ...fetchOptions, headers })
+  }
+
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: 'Unknown error' }))
     throw new Error(error.error ?? `API error: ${response.status}`)
@@ -474,5 +497,87 @@ export async function updateGoalProgress(
   return goalsApiCall(`${API_URL}/goals/${id}/progress`, {
     method: 'POST',
     body: JSON.stringify(body),
+  })
+}
+// ─── CEFR Initial Assessment (Feature 1) ──────────────────────────────────
+
+export interface AssessmentMCQItem {
+  id: string
+  level?: string
+  question: string
+  options: string[]
+}
+
+export interface AssessmentComprehensionQuestion {
+  question: string
+  options: string[]
+}
+
+export interface AssessmentPackage {
+  grammar: { items: AssessmentMCQItem[] }
+  vocabulary: { items: AssessmentMCQItem[] }
+  reading: {
+    title: string
+    content: string
+    questions: AssessmentComprehensionQuestion[]
+  }
+  listening: {
+    title: string
+    script: string
+    questions: AssessmentComprehensionQuestion[]
+  }
+  speaking: {
+    readaloud_sentence: string
+    open_questions: string[]
+  }
+}
+
+export interface AssessmentResult {
+  english_level: string
+  overall_score: number
+  grammar_score: number
+  vocabulary_score: number
+  pronunciation_score: number
+  fluency_score: number
+  speaking_score: number
+  reading_score: number
+  listening_score: number
+  message: string
+}
+
+export interface AssessmentSubmission {
+  grammar: Record<string, number>
+  vocabulary: Record<string, number>
+  reading_answers: number[]
+  listening_answers: number[]
+  speaking: {
+    readaloud_transcript: string
+    readaloud_reference: string
+    open_transcripts: string[]
+  }
+}
+
+export async function getAssessmentStatus(): Promise<{
+  assessment_completed: boolean
+  english_level: string | null
+  assessment_date: string | null
+}> {
+  return apiCall(`${API_URL}/assessment/status`, { method: 'GET' })
+}
+
+export async function startAssessment(): Promise<AssessmentPackage> {
+  // Bounded on purpose: build_assessment() runs up to 4 AI calls (in two
+  // parallel batches of 2), each individually timeout-capped around ~20s
+  // server-side — 45s gives real headroom without leaving the UI spinning
+  // indefinitely if something upstream genuinely stalls.
+  return apiCall(`${API_URL}/assessment/start`, { method: 'GET', timeoutMs: 45000 })
+}
+
+export async function submitAssessment(
+  submission: AssessmentSubmission
+): Promise<AssessmentResult> {
+  return apiCall(`${API_URL}/assessment/submit`, {
+    method: 'POST',
+    body: JSON.stringify(submission),
   })
 }

@@ -52,6 +52,7 @@ export default function CasualConversationPage() {
 
   const [processingLabel, setProcessingLabel] = useState('Transcribing your answer...')
   const [error, setError] = useState('')
+import { getUser } from '@/lib/auth'
 
   const [transcript, setTranscript] = useState('')
   const [feedback, setFeedback] = useState<ConversationFeedback | null>(null)
@@ -211,6 +212,24 @@ export default function CasualConversationPage() {
         console.error('[CasualConversation] transcribe/feedback failed:', e)
         setError(e instanceof Error ? e.message : 'Something went wrong')
         setStage('detail')
+    try {
+      const response = await fetch('/api/practice/conversation/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          transcript, 
+          topic: selectedTopic,
+          conversation: newConversation,
+          englishLevel: getUser()?.english_level ?? null,
+        }),
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        // Add system response
+        setConversation([...newConversation, { speaker: 'system', text: data.response }])
+        setFeedback(data.feedback)
+        setIsSystemTurn(false)
       }
     }
 

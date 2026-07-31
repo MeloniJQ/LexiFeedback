@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -185,6 +185,19 @@ export default function InterviewPracticePage() {
   const [error, setError]             = useState('')
   const [resumeParsed, setResumeParsed] = useState(false)
 
+  // ── Feature 2: refresh-persistence ────────────────────────────────────────
+  // sessionKey identifies this attempt server-side (models/interview_progress.py).
+  // Generated once when questions are first loaded, then reused for every
+  // autosave call so refreshing the page can resume the same attempt.
+  const [sessionKey, setSessionKey] = useState<string | null>(null)
+  const [resumeAvailable, setResumeAvailable] = useState<{
+    session_key: string
+    company: string
+    role: string
+    snapshot: { setup: any; questions: Question[]; pairs: QAPair[]; currentIdx: number }
+  } | null>(null)
+  const [checkingResume, setCheckingResume] = useState(true)
+
   const recorder         = useVoiceRecorder()
   const followupRecorder = useVoiceRecorder()
   const currentQ         = questions[currentIdx]
@@ -193,6 +206,103 @@ export default function InterviewPracticePage() {
   const fmtDuration = (ms: number) => {
     const s = Math.floor(ms / 1000)
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+  }
+
+  // ── Feature 2: autosave every answer server-side before advancing ────────
+  const saveProgress = async (
+    key: string,
+    status: 'in_progress' | 'completed',
+    snapshotPairs: QAPair[],
+    idx: number,
+    qs: Question[] = questions,
+  ) => {
+    try {
+      await authFetch(`${API}/interview/progress/save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_key: key,
+          company: setup.company,
+          role: setup.role,
+          status,
+          snapshot: {
+            setup: {
+              company: setup.company,
+              role: setup.role,
+              jobDescription: setup.jobDescription,
+              keySkills: setup.keySkills,
+            },
+            questions: qs,
+            pairs: snapshotPairs,
+            currentIdx: idx,
+          },
+        }),
+      })
+      localStorage.setItem('lexifeed_interview_session_key', key)
+    } catch (e) {
+      // Autosave failing shouldn't block the live interview — the user can
+      // still finish this attempt, they'd just lose refresh-resume for it.
+      console.error('Autosave failed (non-blocking):', e)
+    }
+  }
+
+  const discardProgress = async (key: string) => {
+    try {
+      await authFetch(`${API}/interview/progress/${key}`, { method: 'DELETE' })
+    } catch {
+      // best-effort
+    }
+    localStorage.removeItem('lexifeed_interview_session_key')
+  }
+
+  // On mount: check whether the user has an interview in progress (e.g. they
+  // refreshed mid-session) and offer to resume it before showing the setup form.
+  useEffect(() => {
+    (async () => {
+      try {
+        const data = await authFetch(`${API}/interview/progress/active`, { method: 'GET' })
+        const progress = data.progress
+        if (progress && progress.snapshot?.questions?.length) {
+          setResumeAvailable({
+            session_key: progress.session_key,
+            company: progress.company || progress.snapshot.setup?.company || '',
+            role: progress.role || progress.snapshot.setup?.role || '',
+            snapshot: progress.snapshot,
+          })
+        }
+      } catch (e) {
+        console.error('Could not check for an in-progress interview:', e)
+      } finally {
+        setCheckingResume(false)
+      }
+    })()
+  }, [])
+
+  const handleResumeInterview = () => {
+    if (!resumeAvailable) return
+    const { snapshot, session_key } = resumeAvailable
+    setSetup((prev) => ({ ...prev, ...snapshot.setup, resume: null }))
+    setQuestions(snapshot.questions)
+    setPairs(snapshot.pairs)
+    setCurrentIdx(snapshot.currentIdx)
+    setSessionKey(session_key)
+    localStorage.setItem('lexifeed_interview_session_key', session_key)
+
+    // Resume at the safe checkpoint right after the last saved answer —
+    // mid-followup-chain state isn't persisted, so we drop them into a
+    // clean "answering" state for the next question rather than guessing
+    // where exactly in a followup exchange they were.
+    if (snapshot.currentIdx < snapshot.questions.length) {
+      setStage('answering')
+    } else {
+      setStage('done')
+    }
+    setResumeAvailable(null)
+  }
+
+  const handleDismissResume = async () => {
+    if (resumeAvailable) await discardProgress(resumeAvailable.session_key)
+    setResumeAvailable(null)
   }
 
   // ── Generate questions (profile + plan are now built automatically inside this single step) ──
@@ -258,6 +368,11 @@ export default function InterviewPracticePage() {
       setPairs([])
       setTranscript('')
       setStage('answering')
+
+      // Feature 2: start a fresh autosave session for this attempt.
+      const newKey = (crypto as any).randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`
+      setSessionKey(newKey)
+      localStorage.setItem('lexifeed_interview_session_key', newKey)
     } catch (e: any) {
       setError(e.message)
       setStage('setup')
@@ -411,7 +526,8 @@ export default function InterviewPracticePage() {
       analysis:   currentAnalysis,
       followups:  [...followupChain, finalRound],
     }
-    setPairs(prev => [...prev, pair])
+    const updatedPairs = [...pairs, pair]
+    setPairs(updatedPairs)
 
     const next = currentIdx + 1
     setTranscript('')
@@ -423,7 +539,15 @@ export default function InterviewPracticePage() {
     recorder.resetRecording()
     followupRecorder.resetRecording()
 
-    if (next < questions.length) {
+    const isLastQuestion = next >= questions.length
+
+    // Feature 2: every answer is persisted server-side BEFORE moving to the
+    // next question — if the user refreshes right now, this Q&A is already saved.
+    if (sessionKey) {
+      saveProgress(sessionKey, isLastQuestion ? 'completed' : 'in_progress', updatedPairs, next)
+    }
+
+    if (!isLastQuestion) {
       setCurrentIdx(next)
       setStage('answering')
     } else {
@@ -513,6 +637,9 @@ export default function InterviewPracticePage() {
       })
       setFinalFeedback(data.session?.feedback ?? '')
       setStage('feedback')
+
+      // Interview is fully complete — no need to keep the autosave around.
+      if (sessionKey) await discardProgress(sessionKey)
     } catch (e: any) {
       setError(e.message)
     }
@@ -521,6 +648,8 @@ export default function InterviewPracticePage() {
   const handleReset = () => {
     recorder.resetRecording()
     followupRecorder.resetRecording()
+    if (sessionKey) discardProgress(sessionKey)
+    setSessionKey(null)
     setStage('setup')
     setSetup({ company: '', role: '', jobDescription: '', keySkills: '', resume: null })
     setQuestions([])
@@ -571,6 +700,28 @@ export default function InterviewPracticePage() {
           <div className="flex items-start gap-3 p-4 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
             <AlertCircle className="w-5 h-5 text-red-600 mt-0.5 shrink-0" />
             <p className="text-sm text-red-700 dark:text-red-300">{error}</p>
+          </div>
+        )}
+
+        {/* ── RESUME PREVIOUS INTERVIEW (Feature 2) ─────────────────────── */}
+        {stage === 'setup' && resumeAvailable && (
+          <div className="rounded-xl border border-[#2C5AA0]/30 bg-[#2C5AA0]/5 dark:bg-[#2C5AA0]/10 p-5 mb-2 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <RotateCcw className="w-5 h-5 text-[#2C5AA0] mt-0.5 shrink-0" />
+              <div>
+                <p className="font-medium text-[#1F2937] dark:text-white">
+                  You have an unfinished interview
+                </p>
+                <p className="text-sm text-[#6B7280] dark:text-gray-400">
+                  {resumeAvailable.role} at {resumeAvailable.company} — {resumeAvailable.snapshot.pairs.length} of{' '}
+                  {resumeAvailable.snapshot.questions.length} questions answered.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2 shrink-0">
+              <Button variant="outline" onClick={handleDismissResume}>Start Fresh</Button>
+              <Button onClick={handleResumeInterview}>Resume Interview</Button>
+            </div>
           </div>
         )}
 
