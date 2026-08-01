@@ -1,73 +1,3 @@
-# LexiFeed - Full-Stack AI English Learning & Interview Platform
-
-LexiFeed is a full-stack web application that helps users practice English interview and speaking skills using AI-driven question generation, voice transcription, smart resume processing, and session feedback. It also includes vocabulary building and personal goal-tracking tools.
-
----
-
-## Key Features
-
-- **Secure auth** with JWT-based login/signup.
-- **CEFR Initial English Level Assessment** — instantly places new users in the right difficulty band (A1-C2) using fast static content for zero-latency onboarding.
-- **AI-powered interview question generation** from company, role, resume context, and a planner-generated interview blueprint.
-- **Agentic interview analysis** — context-aware answer evaluation that tracks patterns and competency development across a full session.
-- **Voice transcription and analysis** for spoken answers (local, free transcription via faster-whisper), covering both content and delivery (filler words, pace, structure).
-- **Follow-up question generation** based on candidate responses, including voice-aware follow-ups that reference what was actually said.
-- **Reading practice mode** with AI-generated passages and TV-news-anchor scripts across difficulty levels, plus pronunciation analysis.
-- **Candidate Intelligence** — resume parsing, job description analysis, and resume/JD match scoring.
-- **Presentation upload preview** — converts uploaded `.ppt`/`.pptx` files to slide images.
-- **Vocabulary builder** — save words/idioms/phrases encountered during practice, plus a daily "Word of the Day".
-- **Goal tracking** — create practice goals with deadlines, track progress and streaks, and view dashboard stats.
-- **Session feedback and progress stats** saved per user.
-- **Modern frontend** built with Next.js, TypeScript, Tailwind CSS.
-
----
-
-## Technology Stack
-
-### Frontend
-
-- **Next.js** (App Router)
-- **TypeScript**
-- **Tailwind CSS**
-- **React**
-- **Lucide icons**
-- **React hooks** + custom auth state
-
-### Backend
-
-- **Flask 3.x**
-- **Flask-CORS**
-- **Flask-SQLAlchemy** / **SQLite**
-- **JWT auth** via custom Flask middleware (`PyJWT`)
-- **Google Gemini** (`google-genai`) — used directly by the AI/voice/agentic-analysis services for question generation, feedback, and analysis.
-- **Configurable provider abstraction** (`backend/llm/`, `AI_PROVIDER`) — OpenRouter / OpenAI / Ollama / Gemini — used by the `backend/agents/` interview-agent pipeline.
-- **faster-whisper** — local, free speech-to-text transcription.
-- **PyMuPDF**, **pdfplumber**, **PyPDF2**, **python-docx** — resume/PDF/presentation parsing.
-
----
-
-## Project Structure
-
-```
-LexiFeed/
-├── backend/
-│   ├── app.py
-│   ├── config.py
-│   ├── requirements.txt
-│   ├── agents/          # Agentic interview pipeline (provider-abstracted)
-│   ├── llm/              # AI_PROVIDER abstraction (OpenRouter/OpenAI/Ollama/Gemini)
-│   ├── models/
-│   ├── routes/
-│   ├── services/
-│   └── utils/
-└── frontend/
-    ├── app/
-    ├── components/
-    ├── lib/
-    ├── hooks/
-    └── package.json
-```
-
 ---
 
 ## Setup Guide
@@ -83,37 +13,37 @@ LexiFeed/
 
 1. Open a terminal and navigate to the backend folder:
 
-   ```bash
+```bash
    cd backend
-   ```
+```
 
 2. Create and activate a virtual environment:
 
    * Windows PowerShell:
-     ```powershell
+```powershell
      python -m venv venv
      .\venv\Scripts\Activate.ps1
-     ```
+```
    * macOS/Linux:
-     ```bash
+```bash
      python -m venv venv
      source venv/bin/activate
-     ```
+```
 
 3. Install dependencies:
 
-   ```bash
+```bash
    pip install -r requirements.txt
-   ```
+```
 
 4. Create a `.env` file inside `backend/`:
 
-   ```env
+```env
    SECRET_KEY=your_app_secret_key_here
    JWT_SECRET_KEY=your_jwt_secret_key_here
    DATABASE_URL=sqlite:///app.db
 
-   # Used directly by services/ (ai_service, voice_service, agentic_analysis)
+   # Used directly by services/ (ai_service, voice_service, agentic_analysis, conversation_service)
    GEMINI_API_KEY=your_gemini_api_key_here
 
    # Used by the backend/agents/ pipeline via the AI_PROVIDER abstraction
@@ -121,22 +51,26 @@ LexiFeed/
    AI_MODEL=openrouter/free
    OPENROUTER_API_KEY=your_openrouter_api_key_here
    OLLAMA_API_URL=http://127.0.0.1:11434
-   ```
+
+   # Optional — faster-whisper transcription tuning (see "Voice/Whisper
+   # performance tuning" below). Defaults to "base" if unset.
+   WHISPER_MODEL_SIZE=base
+```
 
    > Get a free Gemini API key at https://aistudio.google.com/app/apikey
    > Get a free OpenRouter API key at https://openrouter.ai/keys — `openrouter/free` is OpenRouter's own auto-router, which picks whichever free model currently has capacity (recommended over pinning a single popular free model like `meta-llama/llama-3.3-70b-instruct:free`, which gets rate-limited across all OpenRouter users during busy periods). No credit card required. Browse individual free models (`:free` suffix) at https://openrouter.ai/models?supported_parameters=free
 
 5. Start the backend server:
 
-   ```bash
+```bash
    python app.py
-   ```
+```
 
 6. Verify the backend is running:
 
-   ```text
+```text
    http://localhost:5000/api/health
-   ```
+```
 
    > `app.db` is generated automatically inside `backend/instance/` when the backend starts.
 
@@ -163,24 +97,24 @@ soffice --version
 
 1. Open a separate terminal and go to the frontend folder:
 
-   ```bash
+```bash
    cd frontend
-   ```
+```
 
 2. Install dependencies:
 
-   ```bash
+```bash
    npm install
-   ```
+```
 
 3. Create a `.env.local` file in `frontend/`:
 
-   ```env
+```env
    NEXT_PUBLIC_API_URL=http://localhost:5000/api
    GROQ_API_KEY=your_groq_api_key_here
    GEMINI_API_KEY=your_gemini_api_key_here
    PEXELS_API_KEY=your_pexels_api_key_here
-   ```
+```
 
    | Key | Where to get it | Cost |
    |-----|-------------|------|
@@ -190,15 +124,15 @@ soffice --version
 
 4. Run the frontend:
 
-   ```bash
+```bash
    npm run dev
-   ```
+```
 
 5. Open the app at:
 
-   ```text
+```text
    http://localhost:3000
-   ```
+```
 
 ---
 
@@ -253,8 +187,13 @@ The frontend stores the returned JWT token and sends it in the `Authorization: B
 
 ### Reading Practice
 - Routes under `/api/practice/reading` — see `backend/routes/reading.py` for AI passage/news-script generation and pronunciation analysis.
-- Passage generation accepts `level` (CEFR) and `length` (`short`/`medium`/`long`); `level` defaults to the requesting user's assessed CEFR level when not passed explicitly.
+- Passage generation accepts `level` (CEFR) and `length` (short/medium/long); `level` defaults to the requesting user's assessed CEFR level when not passed explicitly.
 - Every generated passage is logged to `ReadingPassageHistory`, and the last 15 titles (mode-matched, 30-day window) are excluded from future generations to avoid repeats.
+
+### Casual Conversation
+- `GET /api/practice/conversation/topics` — List the 20 predefined topics (title, icon, description, estimated time).
+- `GET /api/practice/conversation/topics/<topic_id>` — Full topic detail (prompt + talking points).
+- `POST /api/practice/conversation/feedback` — Transcript + topic (`topic_id`, or `topic_title`/`topic_prompt` for a custom user-typed topic) + duration → full IELTS-style report (overall score/CEFR level, vocabulary analysis, grammar mistakes, fluency, pronunciation with per-word IPA/syllables/stress, strengths, areas to improve, sample improved response, vocabulary flashcards, quick tips).
 
 ### Vocabulary
 - `GET /api/vocabulary` — List the current user's saved words/idioms/phrases, newest first.
@@ -282,9 +221,19 @@ The frontend stores the returned JWT token and sends it in the `Authorization: B
 
 - The frontend uses `frontend/lib/api.ts` for most interview-related API calls, including blueprint-based question generation.
 - Candidate Intelligence adds backend services and routes for structured resume + JD parsing (`backend/services/resume_parser.py`, `backend/services/jd_parser.py`, `backend/services/match_service.py`).
-- The `backend/agents/` pipeline uses the `AI_PROVIDER` abstraction (`backend/llm/`), supporting `OpenRouter` (default), `OpenAI`, `Ollama`, and `Gemini`. The newer AI/voice/agentic-analysis services (`backend/services/ai_service.py`, `voice_service.py`, `agentic_analysis.py`) call Google Gemini directly via `GEMINI_API_KEY` instead.
+- The `backend/agents/` pipeline uses the `AI_PROVIDER` abstraction (`backend/llm/`), supporting `OpenRouter` (default), `OpenAI`, `Ollama`, and `Gemini`. The newer AI/voice/agentic-analysis/conversation services (`backend/services/ai_service.py`, `voice_service.py`, `agentic_analysis.py`, `conversation_service.py`) try the same `AI_PROVIDER` abstraction first and fall back to calling Google Gemini directly via `GEMINI_API_KEY` if that fails.
 - The backend CORS policy allows local development requests from `localhost`/`127.0.0.1` and standard private-network IP ranges (see `backend/app.py`), so the app can be reached from other devices on the same network without extra CORS config.
 - **SQLAlchemy `metadata` column**: model classes use `meta_data` to represent JSON metadata fields, to avoid conflicting with SQLAlchemy's internal `metadata` class property. These map to the `"metadata"` column in the database.
+- **Pronunciation playback**: Casual Conversation's "click a word to hear it" feature uses the browser's built-in Web Speech API (`speechSynthesis`) — free, no API key, no new dependency, works offline. It only needs a modern browser.
+
+---
+
+## Voice/Whisper Performance Tuning
+
+Transcription time scales with recording length and CPU speed. If transcription feels slow (especially for the 2-minute Casual Conversation recordings), two levers help:
+
+- **`WHISPER_MODEL_SIZE`** in `backend/.env` — defaults to `base`. Set to `tiny` for noticeably faster CPU transcription with a modest accuracy tradeoff. Restart the backend after changing it (first use of a new size downloads that model once, then it's cached).
+- **`beam_size`** in `transcribe_audio()` (`backend/services/voice_service.py`) — greedy decoding (`beam_size=1`) is meaningfully faster than beam search (`beam_size=5`), especially on longer recordings, with only a small accuracy tradeoff for clear speech.
 
 ---
 
@@ -339,6 +288,12 @@ To access LexiFeed from another device on the same network (phone, tablet, anoth
 ### AI slides show generic content (fallback)
 - Check that `GROQ_API_KEY` is set in `frontend/.env.local` and restart `npm run dev` after adding it.
 
+### Popovers, dropdowns, tooltips, or overlays show faded/invisible text
+- This project's `tailwind.config.ts` defines custom color tokens (`popover`, `card`, `muted`, `accent`, etc.) that `components/ui/*.tsx` depend on — but Tailwind v4 only loads a JS config file if `frontend/app/globals.css` has an explicit `@config '../tailwind.config.ts';` line right after `@import 'tailwindcss';`. Without it, those tokens silently resolve to nothing. Confirm that line is present, then restart `npm run dev` (a hot-reload alone may not pick up a `@config` change).
+
+### Backend feels slow, or requests seem to hang with no error
+- Flask's dev server defaults to handling one request at a time. Make sure `backend/app.py`'s last line includes `threaded=True`: `app.run(debug=True, use_reloader=False, port=5000, host="0.0.0.0", threaded=True)`. This matters especially for Casual Conversation, which makes two sequential slow requests (transcribe, then feedback) per session.
+
 ### Reset the database
 ```bash
 cd backend
@@ -385,7 +340,7 @@ python -m pytest tests/
 ## Known Limitations
 
 - **Assessment answer keys** are cached in an in-process dict (`routes/assessment.py`), keyed by user ID. This works for a single-process deployment; a multi-worker/multi-process production deploy should move this to the database or Redis so `/api/assessment/start` and `/api/assessment/submit` always hit the same process.
-- **Interview progress resume** restores state to right after the last *completed* answer. An in-progress follow-up exchange mid-chain isn't separately persisted, so refreshing mid-follow-up drops that one follow-up round (the main answer and its analysis are still saved).
+- **Interview progress resume** restores state to right after the last completed answer. An in-progress follow-up exchange mid-chain isn't separately persisted, so refreshing mid-follow-up drops that one follow-up round (the main answer and its analysis are still saved).
 - **Voice transcription** (`transcribe_audio` in `voice_service.py`) uses local `faster-whisper` and needs no API key, but text-based follow-up/analysis for voice answers still goes through the configured `AI_PROVIDER`.
 - The `backend/agents/` and orchestrator pipeline (blueprint planner, evaluation agent, recommendation agent) is reachable via `/api/interview/plan/*` and `/api/interview/session/*`, but the primary practice page (`/practice/interview`) uses the simpler, self-contained flow described above rather than this orchestrator — worth an audit before relying on the orchestrator end-to-end.
 - **OpenRouter free-tier rate limits**: if you see repeated fallback/template content instead of real AI responses, you may be hitting OpenRouter's free-tier cap (20 requests/min, 50/day without adding credit; 1,000/day once a one-time $10 balance is added). Setting `AI_MODEL=openrouter/free` lets OpenRouter auto-route to whichever free model currently has capacity, instead of hammering a single congested model. See https://openrouter.ai/docs/api-reference/limits for current numbers.
@@ -402,4 +357,4 @@ You can view the project demonstration videos using the Google Drive link below:
 
 🔗[ https://drive.google.com/drive/folders/1wMZ62Scx87hwHFD8_HgB3Xq5Kzr6kPns?usp=sharing](https://drive.google.com/drive/folders/1wMZ62Scx87hwHFD8_HgB3Xq5Kzr6kPns?usp=sharing)
 
-
+The folder contains screen recordings demonstrating the key features and workflow of the project.

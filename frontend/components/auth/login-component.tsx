@@ -1,10 +1,10 @@
 'use client'
 
-import { useState } from 'react'
+import { signInWithEmail } from '@/lib/auth'
+import { AlertCircle, Lock, Mail } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Mail, Lock, AlertCircle } from 'lucide-react'
-import { signInWithEmail } from '@/lib/auth'
+import { useState } from 'react'
 
 export function LoginFormComponent() {
   const [email, setEmail] = useState('')
@@ -28,8 +28,8 @@ export function LoginFormComponent() {
 
     setIsLoading(true)
     try {
-      await signInWithEmail(email, password)
-      router.push('/dashboard')
+      const user = await signInWithEmail(email, password)
+      router.push(user.assessment_completed ? '/dashboard' : '/assessment')
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Could not connect to server. Make sure the backend is running.'
       setError(msg)

@@ -1,18 +1,18 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef } from 'react'
-import Link from 'next/link'
-import { Button } from '@/components/ui/button'
-import { Loader2, AlertCircle, ArrowLeft, RotateCcw, MessageCircle, Home } from 'lucide-react'
-import { getToken } from '@/lib/auth'
-import { API_URL as API } from '@/lib/api'
-import { useVoiceRecorder } from '@/hooks/use-voice-recorder'
+import { CustomTopicCard } from '@/components/conversation/custom-topic-card'
+import { FeedbackReport, type ConversationFeedback } from '@/components/conversation/feedback-report'
+import { RecordingPlayback } from '@/components/conversation/recording-playback'
+import { SpeakingTimer } from '@/components/conversation/speaking-timer'
 import { TopicCard, type ConversationTopicSummary } from '@/components/conversation/topic-card'
 import { TopicDetail, type ConversationTopicDetail } from '@/components/conversation/topic-detail'
-import { CustomTopicCard } from '@/components/conversation/custom-topic-card'
-import { SpeakingTimer } from '@/components/conversation/speaking-timer'
-import { RecordingPlayback } from '@/components/conversation/recording-playback'
-import { FeedbackReport, type ConversationFeedback } from '@/components/conversation/feedback-report'
+import { Button } from '@/components/ui/button'
+import { useVoiceRecorder } from '@/hooks/use-voice-recorder'
+import { API_URL as API } from '@/lib/api'
+import { getToken } from '@/lib/auth'
+import { AlertCircle, ArrowLeft, Home, Loader2, MessageCircle, RotateCcw } from 'lucide-react'
+import Link from 'next/link'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 type Stage = 'topics' | 'detail' | 'recording' | 'processing' | 'feedback'
 
@@ -52,7 +52,6 @@ export default function CasualConversationPage() {
 
   const [processingLabel, setProcessingLabel] = useState('Transcribing your answer...')
   const [error, setError] = useState('')
-import { getUser } from '@/lib/auth'
 
   const [transcript, setTranscript] = useState('')
   const [feedback, setFeedback] = useState<ConversationFeedback | null>(null)
@@ -212,24 +211,6 @@ import { getUser } from '@/lib/auth'
         console.error('[CasualConversation] transcribe/feedback failed:', e)
         setError(e instanceof Error ? e.message : 'Something went wrong')
         setStage('detail')
-    try {
-      const response = await fetch('/api/practice/conversation/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          transcript, 
-          topic: selectedTopic,
-          conversation: newConversation,
-          englishLevel: getUser()?.english_level ?? null,
-        }),
-      })
-
-      if (response.ok) {
-        const data = await response.json()
-        // Add system response
-        setConversation([...newConversation, { speaker: 'system', text: data.response }])
-        setFeedback(data.feedback)
-        setIsSystemTurn(false)
       }
     }
 

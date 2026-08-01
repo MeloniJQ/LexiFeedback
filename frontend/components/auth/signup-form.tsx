@@ -1,10 +1,10 @@
 'use client'
 
-import { useState } from 'react'
+import { signUpWithEmail } from '@/lib/auth'
+import { Calendar, GraduationCap, Lock, Mail, User } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Mail, Lock, User, Calendar, GraduationCap } from 'lucide-react'
-import { signUpWithEmail } from '@/lib/auth'
+import { useState } from 'react'
 
 export function SignupForm() {
   const [fullName, setFullName] = useState('')
@@ -34,9 +34,8 @@ export function SignupForm() {
     setIsLoading(true)
 
     try {
-      await signUpWithEmail(email, password, fullName, age, education)
-      // Navigate to dashboard on success
-      router.push('/dashboard')
+      const user = await signUpWithEmail(email, password, fullName, age, education)
+      router.push(user.assessment_completed ? '/dashboard' : '/assessment')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred. Please try again.')
       console.error(err)
