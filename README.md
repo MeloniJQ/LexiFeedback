@@ -1,3 +1,77 @@
+# LexiFeed - Full-Stack AI English Learning & Interview Platform
+
+LexiFeed is a full-stack web application that helps users practice English interview and speaking skills using AI-driven question generation, voice transcription, smart resume processing, and session feedback. It also includes vocabulary building and personal goal-tracking tools.
+
+---
+
+## Key Features
+
+- **Secure auth** with JWT-based login/signup.
+- **CEFR Initial English Level Assessment** — instantly places new users in the right difficulty band (A1-C2) using fast static content for zero-latency onboarding.
+- **AI-powered interview question generation** from company, role, resume context, and a planner-generated interview blueprint.
+- **Agentic interview analysis** — context-aware answer evaluation that tracks patterns and competency development across a full session.
+- **Voice transcription and analysis** for spoken answers (local, free transcription via faster-whisper), covering both content and delivery (filler words, pace, structure).
+- **Follow-up question generation** based on candidate responses, including voice-aware follow-ups that reference what was actually said.
+- **Reading practice mode** with AI-generated passages and TV-news-anchor scripts across difficulty levels, plus pronunciation analysis.
+- **Casual Conversation practice** — pick a predefined topic or type your own, speak for up to 2 minutes with a live voice-level meter, and get an IELTS/TOEFL-style report: verbatim transcript, vocabulary/grammar/fluency/pronunciation breakdown, a rewritten sample response, and vocabulary flashcards. Mispronounced words are clickable inline — hear the correct pronunciation via text-to-speech, view IPA/syllables/stress, and record yourself to compare.
+- **Candidate Intelligence** — resume parsing, job description analysis, and resume/JD match scoring.
+- **Presentation upload preview** — converts uploaded `.ppt`/`.pptx` files to slide images.
+- **Vocabulary builder** — save words/idioms/phrases encountered during practice, plus a daily "Word of the Day".
+- **Goal tracking** — create practice goals with deadlines, track progress and streaks, and view dashboard stats.
+- **Session feedback and progress stats** saved per user.
+- **Modern frontend** built with Next.js, TypeScript, Tailwind CSS.
+
+---
+
+## Technology Stack
+
+### Frontend
+
+- **Next.js** (App Router)
+- **TypeScript**
+- **Tailwind CSS**
+- **React**
+- **Lucide icons**
+- **React hooks** + custom auth state
+
+### Backend
+
+- **Flask 3.x**
+- **Flask-CORS**
+- **Flask-SQLAlchemy** / **SQLite**
+- **JWT auth** via custom Flask middleware (`PyJWT`)
+- **Google Gemini** (`google-genai`) — used directly by the AI/voice/agentic-analysis/conversation services for question generation, feedback, and analysis.
+- **Configurable provider abstraction** (`backend/llm/`, `AI_PROVIDER`) — OpenRouter / OpenAI / Ollama / Gemini — used by the `backend/agents/` interview-agent pipeline.
+- **faster-whisper** — local, free speech-to-text transcription.
+- **PyMuPDF**, **pdfplumber**, **PyPDF2**, **python-docx** — resume/PDF/presentation parsing.
+
+---
+
+## Project Structure
+LexiFeed/
+├── backend/
+│ ├── app.py
+│ ├── config.py
+│ ├── requirements.txt
+│ ├── agents/ # Agentic interview pipeline (provider-abstracted)
+│ ├── llm/ # AI_PROVIDER abstraction (OpenRouter/OpenAI/Ollama/Gemini)
+│ ├── models/
+│ ├── routes/
+│ │ └── conversation.py # Casual Conversation: topics + feedback endpoints
+│ ├── services/
+│ │ └── conversation_service.py # Topics data + IELTS-style feedback generation
+│ ├── templates/ # Reserved for deployment/documentation templates (currently empty)
+│ ├── tests/ # Unit/integration tests
+│ └── utils/
+└── frontend/
+├── app/
+├── components/
+│ └── conversation/ # Topic grid, timer, transcript, interactive pronunciation
+├── lib/
+├── hooks/
+│ └── use-voice-recorder.ts # Shared recording hook (mic level, duration, blob)
+└── package.json
+
 ---
 
 ## Setup Guide
