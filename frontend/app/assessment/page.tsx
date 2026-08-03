@@ -144,12 +144,30 @@ export default function AssessmentPage() {
     goNext()
   }
 
+  const handleSkipReadaloud = () => {
+    setReadaloudTranscript('')
+    recorder.resetRecording()
+    goNext()
+  }
+
   const handleOpenAnswerDone = async () => {
     const text = await transcribeCurrentRecording()
     if (!text) return
     const updated = [...openTranscripts, text]
     setOpenTranscripts(updated)
     recorder.resetRecording()
+
+    if (pkg && openIdx + 1 < pkg.speaking.open_questions.length) {
+      setOpenIdx(openIdx + 1)
+    } else {
+      await handleSubmit(updated)
+    }
+  }
+
+  const handleSkipOpenAnswer = async () => {
+    recorder.resetRecording()
+    const updated = [...openTranscripts, '']
+    setOpenTranscripts(updated)
 
     if (pkg && openIdx + 1 < pkg.speaking.open_questions.length) {
       setOpenIdx(openIdx + 1)
@@ -353,6 +371,7 @@ export default function AssessmentPage() {
             transcribing={transcribing}
             micError={micError}
             onDone={handleReadaloudDone}
+            onSkip={handleSkipReadaloud}
           />
         </div>
       )}
@@ -371,6 +390,7 @@ export default function AssessmentPage() {
             transcribing={transcribing}
             micError={micError}
             onDone={handleOpenAnswerDone}
+            onSkip={handleSkipOpenAnswer}
           />
         </div>
       )}
@@ -450,14 +470,22 @@ function McqSection({
   onAnswer: (id: string, optionIndex: number) => void
   onContinue: () => void
 }) {
-  const allAnswered = items.every((i) => answers[i.id] !== undefined)
+  const answeredCount = items.filter((i) => answers[i.id] !== undefined).length
   return (
     <div>
       <SectionHeader icon={icon} title={title} />
+      <p className="text-xs text-[#6B7280] dark:text-gray-400 -mt-2 mb-4">
+        Not sure? It's fine to leave a question unanswered and continue — you can skip any question.
+      </p>
       <div className="space-y-6 mb-6">
         {items.map((item, qi) => (
           <div key={item.id}>
-            <p className="font-medium mb-3">{qi + 1}. {item.question}</p>
+            <div className="flex items-center justify-between mb-3">
+              <p className="font-medium">{qi + 1}. {item.question}</p>
+              {answers[item.id] === undefined && (
+                <span className="text-xs text-[#6B7280] dark:text-gray-400 shrink-0 ml-3 italic">Not answered</span>
+              )}
+            </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {item.options.map((opt, oi) => (
                 <button
@@ -476,8 +504,8 @@ function McqSection({
           </div>
         ))}
       </div>
-      <Button disabled={!allAnswered} onClick={onContinue} className="w-full">
-        Continue <ChevronRight className="ml-1 h-4 w-4" />
+      <Button onClick={onContinue} className="w-full">
+        {answeredCount < items.length ? `Continue (${items.length - answeredCount} skipped)` : 'Continue'} <ChevronRight className="ml-1 h-4 w-4" />
       </Button>
     </div>
   )
@@ -492,13 +520,18 @@ function ComprehensionQuestions({
   onContinue: () => void
   disabled?: boolean
 }) {
-  const allAnswered = questions.every((_, qi) => answers[qi] !== undefined)
+  const answeredCount = questions.filter((_, qi) => answers[qi] !== undefined).length
   return (
     <div>
       <div className={`space-y-6 mb-6 ${disabled ? 'opacity-40 pointer-events-none' : ''}`}>
         {questions.map((q, qi) => (
           <div key={qi}>
-            <p className="font-medium mb-3">{qi + 1}. {q.question}</p>
+            <div className="flex items-center justify-between mb-3">
+              <p className="font-medium">{qi + 1}. {q.question}</p>
+              {answers[qi] === undefined && (
+                <span className="text-xs text-[#6B7280] dark:text-gray-400 shrink-0 ml-3 italic">Not answered</span>
+              )}
+            </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {q.options.map((opt, oi) => (
                 <button
@@ -517,20 +550,21 @@ function ComprehensionQuestions({
           </div>
         ))}
       </div>
-      <Button disabled={!allAnswered || disabled} onClick={onContinue} className="w-full">
-        Continue <ChevronRight className="ml-1 h-4 w-4" />
+      <Button disabled={disabled} onClick={onContinue} className="w-full">
+        {answeredCount < questions.length ? `Continue (${questions.length - answeredCount} skipped)` : 'Continue'} <ChevronRight className="ml-1 h-4 w-4" />
       </Button>
     </div>
   )
 }
 
 function RecorderControls({
-  recorder, transcribing, micError, onDone,
+  recorder, transcribing, micError, onDone, onSkip,
 }: {
   recorder: ReturnType<typeof useVoiceRecorder>
   transcribing: boolean
   micError: string
   onDone: () => void
+  onSkip: () => void
 }) {
   // Safety net: auto-stop after 3 minutes so a recording can never run
   // away indefinitely even if something else goes wrong in the UI.
@@ -619,6 +653,19 @@ function RecorderControls({
         <Button size="lg" variant="outline" onClick={recorder.startRecording}>
           <RotateCcw className="mr-2 h-4 w-4" /> Retry
         </Button>
+      )}
+
+      {/* Skip is always available except mid-recording/mid-processing, so a
+          mic problem or simply not wanting to answer never blocks progress. */}
+      {['idle', 'requesting', 'error'].includes(recorder.state) && !transcribing && (
+        <div className="mt-4">
+          <button
+            className="text-xs text-[#6B7280] dark:text-gray-400 underline"
+            onClick={onSkip}
+          >
+            Skip this question
+          </button>
+        </div>
       )}
     </div>
   )
