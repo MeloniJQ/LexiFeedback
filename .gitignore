@@ -47,3 +47,5 @@ venv/
 backend/instance/
 
 *.db
+
+uploads/

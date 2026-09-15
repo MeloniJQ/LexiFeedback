@@ -211,8 +211,20 @@ def transcribe_audio(audio_path: str, language: str = "en") -> dict:
         segments, info = model.transcribe(
             audio_path,
             language=language or None,  # None → auto-detect, matching Whisper API's optional language param
-            vad_filter=True,             # skip silence, improves accuracy on short recordings
-            beam_size=5,
+            # NOTE: vad_filter is intentionally OFF by default. Silero VAD (used
+            # internally when this is True) can misfire on short recordings —
+            # e.g. a brief pause at the very start of a browser mic recording,
+            # or slightly quiet input — and end up treating real speech as
+            # silence, returning an empty transcript even though audio was
+            # captured fine. The original OpenAI Whisper API did not do this
+            # filtering either, so leaving it off keeps behaviour predictable
+            # and consistent with the previous implementation.
+            vad_filter=False,
+            # beam_size=1 (greedy decoding) instead of 5 — meaningfully faster,
+            # especially on longer recordings like the 2-minute Casual
+            # Conversation clips, with only a small accuracy tradeoff for
+            # clear conversational speech on CPU.
+            beam_size=1,
         )
 
         # segments is a generator — must be consumed to actually run inference
