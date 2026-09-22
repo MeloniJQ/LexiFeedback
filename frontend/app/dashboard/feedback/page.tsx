@@ -3,7 +3,19 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { getPracticeSessions, getPracticeStats } from '@/lib/api'
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line } from 'recharts'
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line, AreaChart, Area } from 'recharts'
+
+const TYPE_COLORS: Record<string, string> = {
+  interview: '#2C5AA0',
+  presentation: '#8B5CF6',
+  conversation: '#10B981',
+  reading: '#F59E0B',
+}
+
+function formatShortDate(iso: string) {
+  const d = new Date(iso + 'T00:00:00')
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
 
 export default function FeedbackDashboard() {
   const [sessions, setSessions] = useState<any[]>([])
@@ -12,7 +24,9 @@ export default function FeedbackDashboard() {
     total_hours: 0,
     avg_score_pct: 0,
     streak: 0,
-    skills_progress: []
+    skills_progress: [],
+    activity_timeline: [],
+    vocabulary: { total_learned: 0, learned_this_week: 0, timeline: [] },
   })
   const [isLoading, setIsLoading] = useState(true)
 
@@ -42,17 +56,19 @@ export default function FeedbackDashboard() {
         { category: 'Reading', score: 0 },
       ]
 
-  // Map weekly sessions activity from dynamic session dates or mock if empty
-  const sessionData = sessions.length > 0
-    ? sessions.slice(0, 10).reverse().map((s: any, idx: number) => ({
-        week: `S${idx + 1}`,
-        sessions: 1,
-        duration: 10
-      }))
-    : [
-        { week: 'Week 1', sessions: 0, duration: 0 },
-        { week: 'Week 2', sessions: 0, duration: 0 },
-      ]
+  // Real per-day, per-type activity for the last 30 days (all four practice
+  // modes: interview, presentation, conversation, reading/TV-anchor).
+  const activityData = (stats.activity_timeline || []).map((d: any) => ({
+    ...d,
+    label: formatShortDate(d.date),
+  }))
+
+  // Vocabulary learned (Word of the Day saves), cumulative over 30 days.
+  const vocabData = (stats.vocabulary?.timeline || []).map((d: any) => ({
+    ...d,
+    label: formatShortDate(d.date),
+  }))
+  const totalVocabLearned = stats.vocabulary?.total_learned ?? 0
 
   if (isLoading) {
     return (
@@ -141,29 +157,68 @@ export default function FeedbackDashboard() {
           </ResponsiveContainer>
         </div>
 
-        {/* Session Activity */}
+        {/* Session Activity — real per-day counts across all practice modes */}
         <div className="bg-white dark:bg-[#1F2937] border border-gray-200 dark:border-gray-700 rounded-lg p-6">
           <h2 className="text-lg font-semibold text-[#1F2937] dark:text-white mb-4">
             Activity Timeline
           </h2>
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={sessionData}>
+          {activityData.some((d: any) => d.total > 0) ? (
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={activityData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+                <XAxis dataKey="label" stroke="#6B7280" interval={4} />
+                <YAxis stroke="#6B7280" allowDecimals={false} />
+                <Tooltip
+                  contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #4B5563', borderRadius: '8px' }}
+                  labelStyle={{ color: '#F9FAFB' }}
+                />
+                <Legend />
+                <Bar dataKey="interview" name="Interview" stackId="a" fill={TYPE_COLORS.interview} />
+                <Bar dataKey="presentation" name="Presentation" stackId="a" fill={TYPE_COLORS.presentation} />
+                <Bar dataKey="conversation" name="Conversation" stackId="a" fill={TYPE_COLORS.conversation} />
+                <Bar dataKey="reading" name="Reading" stackId="a" fill={TYPE_COLORS.reading} radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="h-[300px] flex items-center justify-center text-[#6B7280] dark:text-gray-400 text-sm">
+              No practice sessions in the last 30 days yet.
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Vocabulary Growth (Word of the Day) */}
+      <div className="bg-white dark:bg-[#1F2937] border border-gray-200 dark:border-gray-700 rounded-lg p-6 mb-8">
+        <h2 className="text-lg font-semibold text-[#1F2937] dark:text-white mb-1">
+          Vocabulary Growth
+        </h2>
+        <p className="text-sm text-[#6B7280] dark:text-gray-400 mb-4">
+          Words &amp; idioms saved from Word of the Day — {totalVocabLearned} learned all-time
+        </p>
+        {totalVocabLearned > 0 ? (
+          <ResponsiveContainer width="100%" height={260}>
+            <AreaChart data={vocabData}>
+              <defs>
+                <linearGradient id="vocabGradientFb" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#0D9488" stopOpacity={0.4} />
+                  <stop offset="95%" stopColor="#0D9488" stopOpacity={0} />
+                </linearGradient>
+              </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
-              <XAxis dataKey="week" stroke="#6B7280" />
-              <YAxis stroke="#6B7280" />
-              <Tooltip 
-                contentStyle={{
-                  backgroundColor: '#1F2937',
-                  border: '1px solid #4B5563',
-                  borderRadius: '8px',
-                }}
+              <XAxis dataKey="label" stroke="#6B7280" interval={4} />
+              <YAxis stroke="#6B7280" allowDecimals={false} />
+              <Tooltip
+                contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #4B5563', borderRadius: '8px' }}
                 labelStyle={{ color: '#F9FAFB' }}
               />
-              <Legend />
-              <Line type="monotone" name="Session Duration (min)" dataKey="duration" stroke="#10B981" strokeWidth={2} />
-            </LineChart>
+              <Area type="monotone" dataKey="cumulative" name="Total words learned" stroke="#0D9488" fill="url(#vocabGradientFb)" strokeWidth={2} />
+            </AreaChart>
           </ResponsiveContainer>
-        </div>
+        ) : (
+          <div className="h-[260px] flex items-center justify-center text-[#6B7280] dark:text-gray-400 text-sm">
+            No words saved yet — save words from your daily Word of the Day to see progress here.
+          </div>
+        )}
       </div>
 
       {/* Recent Sessions */}
@@ -203,11 +258,9 @@ export default function FeedbackDashboard() {
                       {session.title || 'Untitled Session'}
                     </td>
                     <td className="py-3 px-4 text-[#6B7280] dark:text-gray-400">
-                      {new Date(session.created_at).toLocaleDateString(undefined, {
-                        month: 'short',
-                        day: 'numeric',
-                        year: 'numeric'
-                      })}
+                      {session.duration_seconds
+                        ? `${Math.round(session.duration_seconds / 60)} min`
+                        : '—'}
                     </td>
                     <td className="py-3 px-4 text-[#6B7280] dark:text-gray-400">
                       10 min

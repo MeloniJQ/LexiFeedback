@@ -27,11 +27,12 @@ class OpenRouterProvider(BaseLLMProvider):
          template content.
     """
 
-    # Kept small on purpose: every retry blocks the user's request. One retry
-    # with a short capped backoff clears most transient 429s; anything beyond
-    # that should fall back to local/template content rather than keep the
-    # UI spinning.
-    MAX_RETRIES = 1
+    # Kept small on purpose: every retry blocks the user's request. Two
+    # retries with a short capped backoff clear most transient 429s (the
+    # free auto-router model is shared capacity and gets rate-limited often);
+    # anything beyond that should fall back to local/template content rather
+    # than keep the UI spinning.
+    MAX_RETRIES = 2
     DEFAULT_TIMEOUT_SECONDS = 20
     MAX_BACKOFF_SECONDS = 5
 

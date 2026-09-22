@@ -11,6 +11,7 @@ from routes.question_generation import question_bp
 from routes.voice import voice_bp
 from routes.reading import reading_bp
 from routes.presentation_upload import presentation_upload_bp
+from routes.presentation import presentation_bp
 from routes.candidate_intelligence import candidate_bp
 from routes.analytics import analytics_bp
 from routes.reports import reports_bp
@@ -63,6 +64,7 @@ app.register_blueprint(question_bp, url_prefix="/api/interview/questions")
 app.register_blueprint(reading_bp,   url_prefix="/api/practice/reading")
 app.register_blueprint(voice_bp,     url_prefix="/api/voice")
 app.register_blueprint(presentation_upload_bp)
+app.register_blueprint(presentation_bp, url_prefix="/api/practice/presentation")
 app.register_blueprint(candidate_bp)
 app.register_blueprint(analytics_bp, url_prefix="/api/analytics")
 app.register_blueprint(reports_bp, url_prefix="/api/reports")
@@ -116,6 +118,18 @@ with app.app_context():
                 if col_name not in existing_columns:
                     db.session.execute(text(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}"))
             db.session.commit()
+
+        # ── Lightweight auto-migration for practice_sessions.duration_seconds ──
+        # Same story as above: this column was added to the PracticeSession
+        # model after some databases (like yours) already existed. Runs
+        # automatically for every developer/user on their next backend start —
+        # nobody needs to touch their app.db by hand, and it's a no-op (skipped)
+        # for anyone whose DB is fresh or already has the column.
+        if "practice_sessions" in inspector.get_table_names():
+            existing_session_columns = {col["name"] for col in inspector.get_columns("practice_sessions")}
+            if "duration_seconds" not in existing_session_columns:
+                db.session.execute(text("ALTER TABLE practice_sessions ADD COLUMN duration_seconds FLOAT"))
+                db.session.commit()
     except Exception as migration_error:
         print(f"[startup migration] Warning: could not auto-migrate users table: {migration_error}")
 

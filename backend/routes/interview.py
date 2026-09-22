@@ -14,7 +14,7 @@ Kept for backward compat:
 """
 
 from flask import Blueprint, request, jsonify
-from models import db, PracticeSession, InterviewProgress, User
+from models import db, PracticeSession, InterviewProgress, User, SavedVocabulary
 from services.ai_service import (
     generate_questions_from_resume,
     generate_followup_question,
@@ -214,11 +214,12 @@ def get_session_feedback(payload):
     """
     Body (JSON):
       {
-        "transcript":    "...",   ← full Q&A conversation as plain text
-        "company":       "...",
-        "role":          "...",
-        "session_type":  "interview",
-        "title":         "optional custom title"
+        "transcript":       "...",   ← full Q&A conversation as plain text
+        "company":          "...",
+        "role":             "...",
+        "session_type":     "interview",
+        "title":            "optional custom title",
+        "duration_seconds": 612       (optional — total time spent on this interview)
       }
     """
     try:
@@ -229,6 +230,12 @@ def get_session_feedback(payload):
         session_type = (data.get("session_type") or "interview").strip()
         title        = (data.get("title")        or f"{role} Practice at {company}").strip()
 
+        duration_seconds = data.get("duration_seconds")
+        try:
+            duration_seconds = max(0.0, float(duration_seconds)) if duration_seconds is not None else None
+        except (TypeError, ValueError):
+            duration_seconds = None
+
         if not transcript:
             return jsonify({"error": "transcript cannot be empty"}), 400
 
@@ -236,12 +243,13 @@ def get_session_feedback(payload):
         score    = extract_score(feedback)
 
         session_record = PracticeSession(
-            user_id      = payload["user_id"],
-            session_type = session_type,
-            title        = title,
-            transcript   = transcript,
-            feedback     = feedback,
-            score        = score,
+            user_id          = payload["user_id"],
+            session_type     = session_type,
+            title            = title,
+            transcript       = transcript,
+            feedback         = feedback,
+            score            = score,
+            duration_seconds = duration_seconds,
         )
         db.session.add(session_record)
         db.session.commit()
@@ -375,7 +383,19 @@ def get_user_stats(payload):
     try:
         sessions = PracticeSession.query.filter_by(user_id=payload["user_id"]).all()
         total_sessions = len(sessions)
-        total_hours    = round((total_sessions * 10) / 60, 1)
+
+        # Sum real durations where we have them. Older sessions logged before
+        # duration tracking was added (or any session whose duration wasn't
+        # captured) have duration_seconds = None, so we fall back to a 10-min
+        # estimate only for those specific sessions instead of assuming every
+        # session took exactly 10 minutes.
+        total_seconds = 0.0
+        for s in sessions:
+            if s.duration_seconds is not None:
+                total_seconds += s.duration_seconds
+            else:
+                total_seconds += 10 * 60
+        total_hours = round(total_seconds / 3600, 1)
 
         total_score, valid_count = 0, 0
         for s in sessions:
@@ -420,6 +440,67 @@ def get_user_stats(payload):
                 "improvement": f"+{max(0, avg - 50)}%" if avg else "+0%",
             }
 
+        # ── Activity timeline (last 30 days) — per-type session counts per
+        # day, used to draw the activity graph on the Progress/Analysis page.
+        WINDOW_DAYS = 30
+        today = date.today()
+        day_list = [today - timedelta(days=i) for i in range(WINDOW_DAYS - 1, -1, -1)]
+        by_day = {d: {"interview": 0, "presentation": 0, "conversation": 0, "reading": 0} for d in day_list}
+        window_start = today - timedelta(days=WINDOW_DAYS - 1)
+        for s in sessions:
+            d = s.created_at.date() if s.created_at else None
+            if d and d >= window_start and d in by_day:
+                t = s.session_type.lower()
+                if t in by_day[d]:
+                    by_day[d][t] += 1
+
+        activity_timeline = [
+            {
+                "date": d.isoformat(),
+                "interview": by_day[d]["interview"],
+                "presentation": by_day[d]["presentation"],
+                "conversation": by_day[d]["conversation"],
+                "reading": by_day[d]["reading"],
+                "total": sum(by_day[d].values()),
+            }
+            for d in day_list
+        ]
+
+        # ── Vocabulary learned (Word of the Day saves) — same 30-day window,
+        # plus an all-time total and cumulative-by-day series for the graph.
+        vocab_entries = (
+            SavedVocabulary.query
+            .filter_by(user_id=payload["user_id"])
+            .order_by(SavedVocabulary.created_at.asc())
+            .all()
+        )
+        total_vocab = len(vocab_entries)
+        vocab_by_day = {d: 0 for d in day_list}
+        for v in vocab_entries:
+            d = v.created_at.date() if v.created_at else None
+            if d and d in vocab_by_day:
+                vocab_by_day[d] += 1
+
+        # Cumulative total as of the START of the window, so the running
+        # total in the timeline is accurate even though we only iterate the
+        # last 30 days.
+        running_total = sum(
+            1 for v in vocab_entries if v.created_at and v.created_at.date() < window_start
+        )
+        vocabulary_timeline = []
+        for d in day_list:
+            running_total += vocab_by_day[d]
+            vocabulary_timeline.append({
+                "date": d.isoformat(),
+                "learned": vocab_by_day[d],
+                "cumulative": running_total,
+            })
+
+        this_week_start = today - timedelta(days=6)
+        vocab_this_week = sum(
+            1 for v in vocab_entries if v.created_at and v.created_at.date() >= this_week_start
+        )
+
         return jsonify({
             "total_sessions": total_sessions,
             "total_hours":    total_hours,
@@ -431,6 +512,12 @@ def get_user_stats(payload):
                 skill_entry("Conversation Fluency", "conversation"),
                 skill_entry("Reading Comprehension","reading"),
             ],
+            "activity_timeline": activity_timeline,
+            "vocabulary": {
+                "total_learned": total_vocab,
+                "learned_this_week": vocab_this_week,
+                "timeline": vocabulary_timeline,
+            },
         }), 200
 
     except Exception as e:
