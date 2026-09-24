@@ -17,6 +17,29 @@ function formatShortDate(iso: string) {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
+// Full date + time for a session's created_at timestamp (ISO datetime,
+// unlike the plain "YYYY-MM-DD" used by the activity/vocab timelines above).
+function formatSessionDate(iso: string | null | undefined) {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return '—'
+  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) +
+    ' · ' +
+    d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+}
+
+// mm:ss (or Xh Ym for long sessions) from a duration in seconds.
+function formatDuration(seconds: number | null | undefined) {
+  if (seconds === null || seconds === undefined || isNaN(seconds)) return '—'
+  const totalSeconds = Math.round(seconds)
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const secs = totalSeconds % 60
+  if (hours > 0) return `${hours}h ${minutes}m`
+  if (minutes > 0) return `${minutes}m ${secs}s`
+  return `${secs}s`
+}
+
 export default function FeedbackDashboard() {
   const [sessions, setSessions] = useState<any[]>([])
   const [stats, setStats] = useState<any>({
@@ -29,6 +52,10 @@ export default function FeedbackDashboard() {
     vocabulary: { total_learned: 0, learned_this_week: 0, timeline: [] },
   })
   const [isLoading, setIsLoading] = useState(true)
+  // The session currently open in the "full feedback" modal, so users can
+  // read the entire AI write-up (not just the truncated table preview) and
+  // actually see what changed/improved between sessions.
+  const [selectedSession, setSelectedSession] = useState<any>(null)
 
   useEffect(() => {
     async function loadDashboardData() {
@@ -258,20 +285,31 @@ export default function FeedbackDashboard() {
                       {session.title || 'Untitled Session'}
                     </td>
                     <td className="py-3 px-4 text-[#6B7280] dark:text-gray-400">
-                      {session.duration_seconds
-                        ? `${Math.round(session.duration_seconds / 60)} min`
-                        : '—'}
+                      {formatSessionDate(session.created_at)}
                     </td>
                     <td className="py-3 px-4 text-[#6B7280] dark:text-gray-400">
-                      10 min
+                      {formatDuration(session.duration_seconds)}
                     </td>
                     <td className="py-3 px-4">
                       <span className="inline-block px-3 py-1 rounded-full text-white text-xs font-semibold bg-[#2C5AA0]">
-                        {session.score || '8/10'}
+                        {session.score || '—'}
                       </span>
                     </td>
-                    <td className="py-3 px-4 text-[#6B7280] dark:text-gray-400 text-xs max-w-xs truncate" title={session.feedback}>
-                      {session.feedback}
+                    <td className="py-3 px-4 text-[#6B7280] dark:text-gray-400 text-xs max-w-xs">
+                      {session.feedback ? (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedSession(session)}
+                          className="flex items-center gap-1.5 text-left hover:text-[#2C5AA0] dark:hover:text-[#68A0E0] transition-colors group"
+                        >
+                          <span className="truncate">{session.feedback}</span>
+                          <span className="shrink-0 text-[#2C5AA0] dark:text-[#68A0E0] font-semibold underline-offset-2 group-hover:underline">
+                            View full →
+                          </span>
+                        </button>
+                      ) : (
+                        '—'
+                      )}
                     </td>
                   </tr>
                 ))
@@ -280,6 +318,54 @@ export default function FeedbackDashboard() {
           </table>
         </div>
       </div>
+
+      {/* Full AI Feedback modal — lets the user actually read the entire
+          write-up for a past session (not just the truncated table
+          preview), so they can compare notes across sessions and see how
+          their feedback/scores have changed over time. */}
+      {selectedSession && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
+          onClick={() => setSelectedSession(null)}
+        >
+          <div
+            className="bg-white dark:bg-[#1F2937] rounded-lg shadow-xl w-full max-w-2xl max-h-[85vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4 p-6 border-b border-gray-200 dark:border-gray-700">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-[#2C5AA0] dark:text-[#68A0E0] mb-1">
+                  {selectedSession.session_type}
+                </p>
+                <h3 className="text-lg font-bold text-[#1F2937] dark:text-white">
+                  {selectedSession.title || 'Untitled Session'}
+                </h3>
+                <p className="text-xs text-[#6B7280] dark:text-gray-400 mt-1">
+                  {formatSessionDate(selectedSession.created_at)} · {formatDuration(selectedSession.duration_seconds)}
+                </p>
+              </div>
+              <div className="flex items-center gap-3 shrink-0">
+                <span className="inline-block px-3 py-1 rounded-full text-white text-xs font-semibold bg-[#2C5AA0] whitespace-nowrap">
+                  {selectedSession.score || '—'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedSession(null)}
+                  aria-label="Close"
+                  className="text-[#6B7280] dark:text-gray-400 hover:text-[#1F2937] dark:hover:text-white text-xl leading-none"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+            <div className="p-6 overflow-y-auto">
+              <p className="text-sm text-[#374151] dark:text-gray-300 whitespace-pre-line leading-relaxed">
+                {selectedSession.feedback || 'No feedback text was recorded for this session.'}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
