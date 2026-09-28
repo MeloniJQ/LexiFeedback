@@ -242,11 +242,12 @@ export default function ReadingPracticePage() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({
+          body: JSON.stringify({
           transcript: transcribeData.transcript,
           originalText: passage.content,
           difficulty,
-          mode
+          mode,
+          duration_seconds: transcribeData.duration_seconds ?? recorder.durationMs / 1000
         })
       })
 

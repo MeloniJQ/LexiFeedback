@@ -162,7 +162,7 @@ async function tryGroq(
   const apiKey = process.env.GROQ_API_KEY
   if (!apiKey) return null
 
-  const GROQ_MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'gemma2-9b-it']
+ const GROQ_MODELS = ['openai/gpt-oss-120b', 'qwen/qwen3.6-27b', 'openai/gpt-oss-20b']
   const prompt = buildPrompt(topic, userPrompt, slideCount, contentMode, description, slideHeadings, englishLevel)
 
   for (const model of GROQ_MODELS) {

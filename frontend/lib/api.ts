@@ -382,6 +382,24 @@ export async function getPracticeStats() {
   return apiCall(`${API_URL}/interview/stats`, { method: 'GET' })
 }
 
+// Presentation feedback is scored client-side (Next.js API route calling
+// Groq directly), so unlike interview/conversation/reading it never touches
+// the backend on its own — this call persists the result so it shows up in
+// Practice Sessions / the Progress dashboard, same as the other three modes.
+export async function logPresentationSession(data: {
+  topic?: string
+  slideNumber?: number
+  transcript: string
+  feedbackText?: string
+  score: number
+  durationSec?: number | null
+}) {
+  return apiCall(`${API_URL}/practice/presentation/log`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
 // ─── Goals ────────────────────────────────────────────────────────────────
 
 export type GoalType =

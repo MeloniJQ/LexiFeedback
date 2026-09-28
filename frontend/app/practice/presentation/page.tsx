@@ -15,6 +15,7 @@ import {
 import { useVoiceRecorder } from '@/hooks/use-voice-recorder'
 
 import { getUser } from '@/lib/auth'
+import { logPresentationSession } from '@/lib/api'
 
 interface Slide {
   title: string
@@ -728,6 +729,19 @@ export default function PresentationPracticePage() {
         ...prev,
         [currentSlide]: { ...prev[currentSlide], feedback: feedbackData.feedback, status: 'done' },
       }))
+
+      // Persist this attempt so it shows up in Practice Sessions / the
+      // Progress dashboard — fire-and-forget, never blocks the UI.
+      logPresentationSession({
+        topic: topic.trim() || currentSlideData?.title,
+        slideNumber: currentSlide + 1,
+        transcript,
+        feedbackText: feedbackData.feedbackText,
+        score: feedbackData.feedback?.overallScore ?? 0,
+        durationSec: transcribeData.durationSec ?? rec.durationSec,
+      }).catch(() => {
+        // Non-fatal: the user still sees their feedback either way.
+      })
     } catch (err: any) {
       setRecordings(prev => ({
         ...prev,

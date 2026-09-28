@@ -8,7 +8,7 @@ import { Label }    from '@/components/ui/label'
 import {
   Mic, Square, Send, Upload, FileText, Home,
   ChevronRight, Loader2, CheckCircle2, MessageSquare,
-  Brain, AlertCircle, RotateCcw, Star, BarChart2,
+  Brain, AlertCircle, AlertTriangle, RotateCcw, Star, BarChart2,
   Volume2, Zap, Award, TrendingUp, X
 } from 'lucide-react'
 import Link from 'next/link'
@@ -56,6 +56,7 @@ interface VoiceAnalysis {
     sentence_count: number
     avg_sentence_length: number
   }
+  is_fallback?: boolean
 }
 
 interface AgenticAnalysis {
@@ -101,6 +102,9 @@ interface FollowupData {
 interface FollowupRound {
   data: FollowupData
   transcript: string
+  // Real per-answer analysis for this follow-up, same shape/quality as the
+  // main question's analysis — was previously never generated at all.
+  analysis?: VoiceAnalysis | null
 }
 
 interface QAPair {
@@ -181,6 +185,10 @@ export default function InterviewPracticePage() {
   const [sessionComparison, setSessionComparison] = useState<SessionComparison | null>(null)
   const [sessionComparisonLoading, setSessionComparisonLoading] = useState(false)
   const [followupTranscript, setFollowupTranscript] = useState('')
+  // Real analysis of the current follow-up answer — mirrors currentAnalysis
+  // for the main question, but was previously never populated at all.
+  const [followupAnalysis, setFollowupAnalysis] = useState<VoiceAnalysis | null>(null)
+  const [analyzingFollowup, setAnalyzingFollowup] = useState(false)
   const [finalFeedback, setFinalFeedback] = useState('')
   const [error, setError]             = useState('')
   const [resumeParsed, setResumeParsed] = useState(false)
@@ -197,6 +205,12 @@ export default function InterviewPracticePage() {
     snapshot: { setup: any; questions: Question[]; pairs: QAPair[]; currentIdx: number }
   } | null>(null)
   const [checkingResume, setCheckingResume] = useState(true)
+
+  // ── Session duration tracking ─────────────────────────────────────────────
+  // Stamped the moment the interview actually starts (questions generated /
+  // resumed), so we can report how long the user really spent when the
+  // session's final feedback is saved, instead of a hardcoded estimate.
+  const sessionStartRef = useRef<number | null>(null)
 
   const recorder         = useVoiceRecorder()
   const followupRecorder = useVoiceRecorder()
@@ -297,6 +311,9 @@ export default function InterviewPracticePage() {
     } else {
       setStage('done')
     }
+    // Resume doesn't persist the original start timestamp, so timing
+    // restarts from here — still far more accurate than a fixed 10 min.
+    sessionStartRef.current = Date.now()
     setResumeAvailable(null)
   }
 
@@ -307,12 +324,12 @@ export default function InterviewPracticePage() {
 
   // ── Generate questions (profile + plan are now built automatically inside this single step) ──
   const handleGenerateQuestions = async () => {
-    if (!setup.company.trim() || !setup.role.trim()) {
-      setError('Company and Job Title are required.')
+    if (!setup.role.trim()) {
+      setError('Job Title is required.')
       return
     }
-    if (!setup.resume && !setup.jobDescription.trim()) {
-      setError('Upload a resume or paste a job description so questions can be personalised.')
+    if (!setup.resume) {
+      setError('Upload a resume before generating interview questions.')
       return
     }
 
@@ -368,6 +385,7 @@ export default function InterviewPracticePage() {
       setPairs([])
       setTranscript('')
       setStage('answering')
+      sessionStartRef.current = Date.now()
 
       // Feature 2: start a fresh autosave session for this attempt.
       const newKey = (crypto as any).randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`
@@ -486,8 +504,46 @@ export default function InterviewPracticePage() {
   // ── Step 4: After seeing analysis, proceed to follow-up ──────────────────
   const handleGoToFollowup = () => {
     setFollowupTranscript('')
+    setFollowupAnalysis(null)
     followupRecorder.resetRecording()
     setStage('followup')
+  }
+
+  // Analyse a follow-up answer with the exact same rich evaluation used for
+  // the main question (content/delivery/vocabulary scores, strengths/gaps,
+  // top tip) — previously follow-up answers were transcribed but never
+  // actually analysed at all.
+  const analyzeFollowupAnswer = async (
+    text: string,
+    followupQuestion: string,
+    duration: number,
+    wordCount: number,
+  ): Promise<VoiceAnalysis | null> => {
+    if (!text.trim()) return null
+    setAnalyzingFollowup(true)
+    try {
+      const analysis: VoiceAnalysis = await authFetch(`${API}/voice/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transcript:       text,
+          question:         followupQuestion,
+          question_type:    'follow-up',
+          company:          setup.company,
+          role:             setup.role,
+          duration_seconds: duration,
+          word_count:       wordCount || text.split(/\s+/).filter(Boolean).length,
+        }),
+      })
+      setFollowupAnalysis(analysis)
+      return analysis
+    } catch (e: any) {
+      console.error('Follow-up analysis failed (non-blocking):', e)
+      setFollowupAnalysis(null)
+      return null
+    } finally {
+      setAnalyzingFollowup(false)
+    }
   }
 
   // ── Step 5: Transcribe follow-up audio ───────────────────────────────────
@@ -508,9 +564,20 @@ export default function InterviewPracticePage() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       setFollowupTranscript(data.transcript)
+      setStage('followup')
+
+      // Score this follow-up answer right away, same as the main question —
+      // runs after the transcript is shown so the UI doesn't block on it.
+      if (currentFollowup) {
+        await analyzeFollowupAnswer(
+          data.transcript,
+          currentFollowup.followup,
+          data.duration_seconds ?? 0,
+          data.word_count ?? 0,
+        )
+      }
     } catch (e: any) {
       setError(`Follow-up transcription failed: ${e.message}`)
-    } finally {
       setStage('followup')
     }
   }
@@ -519,7 +586,11 @@ export default function InterviewPracticePage() {
   const handleSubmitFollowup = () => {
     if (!currentAnalysis || !currentFollowup) return
 
-    const finalRound: FollowupRound = { data: currentFollowup, transcript: followupTranscript || '(skipped)' }
+    const finalRound: FollowupRound = {
+      data: currentFollowup,
+      transcript: followupTranscript || '(skipped)',
+      analysis: followupAnalysis,
+    }
     const pair: QAPair = {
       question:   currentQ,
       transcript: transcript,
@@ -535,6 +606,7 @@ export default function InterviewPracticePage() {
     setCurrentFollowup(null)
     setCurrentAgentic(null)
     setFollowupTranscript('')
+    setFollowupAnalysis(null)
     setFollowupChain([])
     recorder.resetRecording()
     followupRecorder.resetRecording()
@@ -559,7 +631,11 @@ export default function InterviewPracticePage() {
   const handleAskAnotherFollowup = async () => {
     if (!currentFollowup) return
 
-    const completedRound: FollowupRound = { data: currentFollowup, transcript: followupTranscript || '(skipped)' }
+    const completedRound: FollowupRound = {
+      data: currentFollowup,
+      transcript: followupTranscript || '(skipped)',
+      analysis: followupAnalysis,
+    }
     const newChain = [...followupChain, completedRound]
     setFollowupChain(newChain)
     setError('')
@@ -579,6 +655,7 @@ export default function InterviewPracticePage() {
       })
       setCurrentFollowup(fu)
       setFollowupTranscript('')
+      setFollowupAnalysis(null)
       followupRecorder.resetRecording()
       setStage('followup')
     } catch (e: any) {
@@ -616,13 +693,22 @@ export default function InterviewPracticePage() {
     try {
       const fullTranscript = pairs.map((p, i) => {
         let b = `Q${i + 1} [${p.question.type}]: ${p.question.question}\n`
-        b += `A: ${p.transcript}`
+        b += `A: ${p.transcript} (scored ${p.analysis.scores.overall}/10)`
         p.followups.forEach((round, j) => {
           b += `\nFollow-up ${j + 1}: ${round.data.followup}\n`
           b += `A: ${round.transcript}`
+          if (round.analysis) {
+            b += ` (scored ${round.analysis.scores.overall}/10${round.analysis.is_fallback ? ', unverified estimate' : ''})`
+          }
         })
         return b
       }).join('\n\n---\n\n')
+
+            // Real elapsed time for this session, from when it started (or was
+      // resumed) to right now — replaces the old hardcoded "10 min" estimate.
+      const duration_seconds = sessionStartRef.current
+        ? (Date.now() - sessionStartRef.current) / 1000
+        : undefined
 
       const data = await authFetch(`${API}/interview/feedback`, {
         method: 'POST',
@@ -633,6 +719,7 @@ export default function InterviewPracticePage() {
           role:         setup.role,
           session_type: 'interview',
           title:        `${setup.role} at ${setup.company}`,
+          duration_seconds,
         }),
       })
       setFinalFeedback(data.session?.feedback ?? '')
@@ -736,8 +823,8 @@ export default function InterviewPracticePage() {
                   value={setup.role} onChange={e => setSetup(s => ({ ...s, role: e.target.value }))} />
               </div>
               <div>
-                <Label>Company <span className="text-red-500">*</span></Label>
-                <Input className="mt-1" placeholder="e.g. Google"
+                <Label>Company</Label>
+                <Input className="mt-1" placeholder="e.g. Google (optional)"
                   value={setup.company} onChange={e => setSetup(s => ({ ...s, company: e.target.value }))} />
               </div>
             </div>
@@ -756,8 +843,10 @@ export default function InterviewPracticePage() {
                 onChange={e => setSetup(s => ({ ...s, keySkills: e.target.value }))} />
             </div>
             <div>
-              <Label>Resume / CV
-                <span className="ml-2 text-xs font-normal text-[#6B7280]">(PDF, DOCX, TXT — recommended)</span>
+              <Label className="inline-flex items-center gap-1">
+                Resume / CV
+                <span className="text-red-500 text-base leading-none">*</span>
+                <span className="ml-1 text-xs font-normal text-[#6B7280]">(PDF, DOCX, TXT — required)</span>
               </Label>
               <div className="mt-2">
                 <input type="file" accept=".pdf,.doc,.docx,.txt" id="resume-input" className="hidden"
@@ -776,7 +865,7 @@ export default function InterviewPracticePage() {
             </div>
             <div className="flex flex-col gap-3 sm:flex-row">
               <Button className="flex-1" onClick={handleGenerateQuestions}
-                disabled={!setup.company.trim() || !setup.role.trim()}>
+                disabled={!setup.role.trim() || !setup.resume}>
                 Generate My Interview Questions <ChevronRight className="w-4 h-4 ml-2" />
               </Button>
             </div>
@@ -868,6 +957,8 @@ export default function InterviewPracticePage() {
                 {transcript}
               </p>
             </div>
+
+            {currentAnalysis.is_fallback && <FallbackWarning />}
 
             {/* Score cards */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -1013,11 +1104,38 @@ export default function InterviewPracticePage() {
                     </div>
                   )}
 
+                  {/* Follow-up analysis — same rich per-answer evaluation as the
+                      main question, previously missing entirely for follow-ups. */}
+                  {analyzingFollowup ? (
+                    <LoadingCard message="Analysing your follow-up answer…" sub="" />
+                  ) : followupAnalysis ? (
+                    <div className="space-y-3">
+                      {followupAnalysis.is_fallback && <FallbackWarning />}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        {(['overall', 'content', 'delivery', 'vocabulary'] as const).map(k => (
+                          <ScoreCard key={k} label={k} value={followupAnalysis.scores[k]} />
+                        ))}
+                      </div>
+                      <div className="p-3 rounded-lg bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 space-y-1">
+                        <p className="text-xs text-[#6B7280]"><strong>Relevance:</strong> {followupAnalysis.content_analysis.relevance}</p>
+                        {followupAnalysis.content_analysis.key_gaps.length > 0 && (
+                          <p className="text-xs text-orange-600 dark:text-orange-400">
+                            <strong>Gaps:</strong> {followupAnalysis.content_analysis.key_gaps.join(' · ')}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-start gap-2 p-3 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800">
+                        <Award className="w-4 h-4 text-indigo-500 mt-0.5 shrink-0" />
+                        <p className="text-xs text-indigo-700 dark:text-indigo-300">{followupAnalysis.top_tip}</p>
+                      </div>
+                    </div>
+                  ) : null}
+
                   <div className="flex flex-wrap gap-3">
                     <Button
                       className="flex-1"
                       onClick={handleSubmitFollowup}
-                      disabled={!followupTranscript && !followupRecorder.audioBlob}
+                      disabled={(!followupTranscript && !followupRecorder.audioBlob) || analyzingFollowup}
                     >
                       {currentIdx + 1 < questions.length ? 'Next Question →' : 'Finish Interview'}
                     </Button>
@@ -1026,7 +1144,7 @@ export default function InterviewPracticePage() {
                         variant="outline"
                         className="gap-2"
                         onClick={handleAskAnotherFollowup}
-                        disabled={!followupTranscript && !followupRecorder.audioBlob}
+                        disabled={(!followupTranscript && !followupRecorder.audioBlob) || analyzingFollowup}
                       >
                         <MessageSquare className="w-4 h-4" /> Ask Another Follow-up
                       </Button>
@@ -1053,18 +1171,34 @@ export default function InterviewPracticePage() {
               </strong>
             </p>
 
-            {/* Per-question score recap */}
+            {/* Per-question score recap — now also shows each follow-up's
+                own score, previously follow-ups had no score to show at all. */}
             <div className="text-left space-y-2">
-              {pairs.map((p, i) => (
-                <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-800 text-sm">
-                  <span className="text-[#374151] dark:text-gray-300 truncate max-w-xs">
-                    Q{i + 1}: {p.question.question.slice(0, 60)}…
-                  </span>
-                  <span className={`font-bold ml-2 shrink-0 ${SCORE_COLOR(p.analysis.scores.overall)}`}>
-                    {p.analysis.scores.overall}/10
-                  </span>
-                </div>
-              ))}
+              {pairs.map((p, i) => {
+                const scoredFollowups = p.followups.filter(r => r.analysis)
+                return (
+                  <div key={i} className="p-3 rounded-lg bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-800 text-sm space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[#374151] dark:text-gray-300 truncate max-w-xs">
+                        Q{i + 1}: {p.question.question.slice(0, 60)}…
+                      </span>
+                      <span className={`font-bold ml-2 shrink-0 ${SCORE_COLOR(p.analysis.scores.overall)}`}>
+                        {p.analysis.scores.overall}/10
+                      </span>
+                    </div>
+                    {scoredFollowups.map((round, j) => (
+                      <div key={j} className="flex items-center justify-between pl-3 border-l-2 border-indigo-200 dark:border-indigo-800">
+                        <span className="text-xs text-[#6B7280] dark:text-gray-500 truncate max-w-xs">
+                          ↳ Follow-up {j + 1}{round.analysis?.is_fallback ? ' (unverified)' : ''}
+                        </span>
+                        <span className={`text-xs font-semibold ml-2 shrink-0 ${SCORE_COLOR(round.analysis!.scores.overall)}`}>
+                          {round.analysis!.scores.overall}/10
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )
+              })}
             </div>
 
             {/* Agentic session-level reflection: synthesizes ALL answers together */}
@@ -1192,6 +1326,19 @@ function ProgressBar({ current, total }: { current: number; total: number }) {
       <div className="h-1.5 w-full rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden">
         <div className="h-full rounded-full bg-indigo-500 transition-all duration-500" style={{ width: `${pct}%` }} />
       </div>
+    </div>
+  )
+}
+
+function FallbackWarning() {
+  return (
+    <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+      <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+      <p className="text-xs text-amber-800 dark:text-amber-300">
+        The AI reviewer couldn't be reached for this answer, so the score below is a rough automatic
+        placeholder — it has <strong>not</strong> verified whether your answer was actually correct. Try
+        analysing it again in a moment for a real evaluation.
+      </p>
     </div>
   )
 }

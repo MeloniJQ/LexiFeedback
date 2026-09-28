@@ -365,6 +365,10 @@ Return ONLY this JSON (no markdown fences, no extra keys):
             "sentence_count":      sentence_count,
             "avg_sentence_length": avg_sentence_len,
         }
+        # Marks this as a genuine AI-graded analysis (as opposed to the local
+        # heuristic used when the AI call fails below) — the frontend uses
+        # this to warn the user when a score couldn't actually be verified.
+        data["is_fallback"] = False
         return data
 
     except Exception as e:
@@ -481,49 +485,74 @@ def _empty_analysis() -> dict:
         "vocabulary_analysis":{"strong_phrases": [], "weak_phrases": [], "suggestion": ""},
         "top_tip":            "Please provide a spoken or typed answer.",
         "metrics":            {"word_count": 0, "duration_seconds": 0, "words_per_minute": 0, "pace_verdict": "unknown", "filler_count": 0, "filler_words_found": [], "sentence_count": 0, "avg_sentence_length": 0},
+        "is_fallback":        False,
     }
 
 
 def _fallback_analysis(transcript, question, filler_words, avg_wpm, pace_verdict, word_count) -> dict:
-    score = 6
-    # Detect poor content / low-effort answers
-    if word_count < 15:
-        score = 2
-    elif word_count < 40:
-        score = 4
+    """
+    Used only when BOTH the primary AI provider and the Gemini fallback fail
+    (missing/invalid API key, rate limit, network error, provider outage).
 
-    if word_count > 80 and score >= 4:  score += 1
-    if filler_words["count"] < 3: score += 1
-    if avg_wpm in range(120, 161) and word_count >= 15: score += 1
+    IMPORTANT: this is a purely local, rule-based estimate. It can measure
+    objective delivery signals (word count, pace, filler words) but it has
+    NO way to judge whether the answer is actually correct or relevant to
+    the question — there is no model reading the content here. Earlier this
+    function scored based on answer length/pace/fillers alone, which meant a
+    long, confidently-delivered but factually WRONG answer could still score
+    8-9/10 and be labelled "relevant" — this is what caused the "same score
+    for right or wrong answers" issue. To avoid silently presenting a guess
+    as a verified judgement, scores here are capped at a moderate, honest
+    ceiling and the response is clearly flagged (`is_fallback: True`) so the
+    UI can warn the user that this specific answer wasn't actually reviewed
+    by AI and the score/feedback shouldn't be trusted as a correctness check.
+    """
+    # Only genuinely-measurable delivery signals move the needle here — never
+    # content/correctness, since this path has no way to evaluate that.
+    delivery_score = max(10 - filler_words["count"], 3)
+    if avg_wpm in range(100, 176) and word_count >= 15:
+        delivery_score = min(delivery_score + 1, 10)
 
-    logger.info(f"[_fallback_analysis] content_score={score} delivery_score={10 - filler_words['count']}")
+    # Content/vocabulary are left at a flat, uncertain midpoint — NOT
+    # inflated by length or pace, since neither implies correctness.
+    content_score = 5
+    if word_count < 10:
+        # Still safe to flag near-empty answers as clearly weak.
+        content_score = 2
+
+    overall_score = round((content_score + delivery_score) / 2)
+
+    logger.info(
+        f"[_fallback_analysis] AI unavailable — using degraded local estimate "
+        f"(content={content_score}, delivery={delivery_score})"
+    )
 
     return {
         "scores": {
-            "content":    min(score, 10),
-            "delivery":   max(10 - filler_words["count"], 2) if word_count < 15 else max(10 - filler_words["count"], 4),
-            "vocabulary": 7,
-            "overall":    min(score, 10),
+            "content":    content_score,
+            "delivery":   delivery_score,
+            "vocabulary": 5,
+            "overall":    overall_score,
         },
         "content_analysis": {
             "star_used":   False,
-            "relevance":   "Answer appears relevant to the question.",
-            "specificity": "Add concrete examples and numbers to strengthen your answer.",
-            "key_strengths": ["Answered within the expected length.", "Stayed on topic."],
-            "key_gaps":    ["Missing quantifiable outcomes.", "STAR structure not clearly applied."],
+            "relevance":   "Could not be verified — the AI reviewer was unavailable for this answer.",
+            "specificity": "Could not be verified — please re-run analysis when the AI service is back.",
+            "key_strengths": [],
+            "key_gaps":    ["This answer's correctness/relevance was NOT verified by AI — treat this score as a placeholder, not a real evaluation."],
         },
         "delivery_analysis": {
             "pace_comment":        f"Speaking pace: {avg_wpm} wpm ({pace_verdict}).",
             "filler_comment":      f"{filler_words['count']} filler words detected." if filler_words["count"] else "No major filler words detected.",
-            "structure_comment":   "Consider pausing briefly before each new point.",
+            "structure_comment":   "Structure could not be assessed — AI reviewer was unavailable.",
             "confidence_signals":  [],
         },
         "vocabulary_analysis": {
             "strong_phrases": [],
             "weak_phrases":   [],
-            "suggestion":     "Replace vague verbs like 'did' or 'helped' with specific action verbs.",
+            "suggestion":     "Vocabulary could not be assessed — AI reviewer was unavailable.",
         },
-        "top_tip": "Structure your next answer using STAR: state the Situation in one sentence, your Task in one sentence, your Actions in 2–3 sentences, and the Result with a number.",
+        "top_tip": "Our AI reviewer couldn't be reached for this answer, so this score is a rough automatic placeholder, not a real content review. Please try analysing this answer again in a moment.",
         "metrics": {
             "word_count":          word_count,
             "duration_seconds":    0,
@@ -534,4 +563,5 @@ def _fallback_analysis(transcript, question, filler_words, avg_wpm, pace_verdict
             "sentence_count":      0,
             "avg_sentence_length": 0,
         },
+        "is_fallback": True,
     }
