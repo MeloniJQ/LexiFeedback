@@ -23,6 +23,7 @@ import os
 import re
 import json
 import logging
+import inspect
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
@@ -50,29 +51,66 @@ if not client:
     )
 
 
-def _chat(system: str, user: str, temperature: float = 0.6, json_mode: bool = True) -> str:
+def _chat(system: str, user: str, temperature: float = 0.6, json_mode: bool = True, timeout: int = 35) -> str:
     """
     Single choke point for AI calls in this service, matching ai_service.py's
     _chat(): try the configured AI_PROVIDER (OpenRouter by default) first,
     and fall back to a direct Gemini call if that fails for any reason
     (missing/invalid key, rate limit, network error, provider outage).
+
+    timeout: this report is an unusually large, multi-section JSON response
+    (vocabulary analysis, grammar mistakes, pronunciation, a 180-250 word
+    sample response, flashcards, etc.) — it genuinely needs more time to
+    generate than a short analysis call, so this is higher than the
+    provider's normal default. It's still an explicit, bounded value (not
+    "however long it takes") so the total worst-case time across both the
+    primary provider and the Gemini fallback stays predictable and well
+    under the frontend's 120s abort timeout — see _gemini_chat below for why
+    that mattered here.
     """
     try:
         provider = get_provider()
-        return provider.chat(system=system, user=user, temperature=temperature)
+        chat_kwargs = {"system": system, "user": user, "temperature": temperature, "timeout": timeout}
+        # max_retries is only supported by OpenRouterProvider today — check
+        # rather than assume, so this doesn't break if AI_PROVIDER is set to
+        # openai/gemini/ollama instead, none of which accept this kwarg.
+        if "max_retries" in inspect.signature(provider.chat).parameters:
+            # Capped at 1 retry (2 total attempts) specifically for this
+            # heavy, slow-to-generate call — see the timeout docstring
+            # above for why an uncapped retry count here risked stacking up
+            # close to (or past) the frontend's own overall timeout.
+            chat_kwargs["max_retries"] = 1
+        return provider.chat(**chat_kwargs)
     except Exception as e:
         logger.warning(f"[_chat] Primary provider failed ({e}); falling back to Gemini.")
-        return _gemini_chat(system, user, temperature=temperature, json_mode=json_mode)
+        return _gemini_chat(system, user, temperature=temperature, json_mode=json_mode, timeout=timeout)
 
 
-def _gemini_chat(system: str, user: str, temperature: float = 0.6, json_mode: bool = True) -> str:
-    """Direct Gemini call — used as the fallback when the primary provider is unavailable."""
+def _gemini_chat(system: str, user: str, temperature: float = 0.6, json_mode: bool = True, timeout: int = 35) -> str:
+    """
+    Direct Gemini call — used as the fallback when the primary provider is
+    unavailable.
+
+    IMPORTANT: this previously had NO timeout at all. If the primary
+    provider failed (or was slow) AND this Gemini call was then also slow —
+    which is more likely than usual here, since this report asks for an
+    unusually large multi-section JSON response — the request could hang
+    well past the frontend's 120-second abort timeout, which is exactly the
+    "time exceeded" error being reported. `http_options=types.HttpOptions
+    (timeout=...)` bounds this call explicitly, so a slow/stuck Gemini
+    request fails predictably instead of hanging indefinitely, letting
+    generate_conversation_feedback's except block fall through to the local
+    _fallback_feedback() report quickly rather than the user waiting for a
+    request that was never going to finish in time.
+    """
     if not client:
         raise RuntimeError("GEMINI_API_KEY missing — Gemini client not initialised")
 
     config_kwargs = {
         "system_instruction": system,
         "temperature": temperature,
+        # google-genai's HttpOptions.timeout is in milliseconds.
+        "http_options": types.HttpOptions(timeout=timeout * 1000),
     }
     if json_mode:
         config_kwargs["response_mime_type"] = "application/json"
@@ -714,6 +752,9 @@ def _fallback_feedback(transcript: str, topic_title: str, duration_display: str,
     logger.info(f"[_fallback_feedback] topic={topic_title!r} words={word_count} score={base_score}")
 
     return {
+        # Local estimate, not an AI review — routes/conversation.py skips
+        # storing a score for these (keeps stats + level progression honest).
+        "is_fallback": True,
         "overall": {
             "overall_score": base_score,
             "cefr_level": "B1",

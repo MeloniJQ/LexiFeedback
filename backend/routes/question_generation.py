@@ -16,9 +16,13 @@ def generate_questions(payload):
     data = request.get_json(silent=True) or {}
     count = int(data.get("count", 10))
     count = max(1, min(count, 20))
+    # The candidate's explicit choice from the setup screen — whether to
+    # include a real, hands-on coding question. Defaults to False (safest:
+    # nobody gets a surprise coding question they didn't ask for).
+    wants_coding = bool(data.get("wants_coding", False))
 
     try:
-        questions = generate_and_save_questions(payload["user_id"], count=count)
+        questions = generate_and_save_questions(payload["user_id"], count=count, wants_coding=wants_coding)
         return jsonify({
             "message": "Questions generated successfully",
             "questions": [q.to_dict() for q in questions],

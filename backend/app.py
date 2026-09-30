@@ -9,6 +9,7 @@ from routes.interview_planning import interview_planning_bp
 from routes.interview_session import interview_session_bp
 from routes.question_generation import question_bp
 from routes.voice import voice_bp
+from routes.code_interview import code_interview_bp
 from routes.reading import reading_bp
 from routes.presentation_upload import presentation_upload_bp
 from routes.presentation import presentation_bp
@@ -63,6 +64,7 @@ app.register_blueprint(interview_session_bp, url_prefix="/api/interview/session"
 app.register_blueprint(question_bp, url_prefix="/api/interview/questions")
 app.register_blueprint(reading_bp,   url_prefix="/api/practice/reading")
 app.register_blueprint(voice_bp,     url_prefix="/api/voice")
+app.register_blueprint(code_interview_bp, url_prefix="/api/interview/code")
 app.register_blueprint(presentation_upload_bp)
 app.register_blueprint(presentation_bp, url_prefix="/api/practice/presentation")
 app.register_blueprint(candidate_bp)

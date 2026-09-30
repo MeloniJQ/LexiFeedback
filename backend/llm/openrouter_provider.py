@@ -47,13 +47,21 @@ class OpenRouterProvider(BaseLLMProvider):
         )
         self.model = os.getenv("AI_MODEL", "openrouter/free")
 
-    def chat(self, system: str, user: str, temperature: float = 0.7, timeout: int | None = None) -> str:
+    def chat(self, system: str, user: str, temperature: float = 0.7, timeout: int | None = None, max_retries: int | None = None) -> str:
         # Bound every call, even callers that don't pass a timeout — an
         # unbounded request-timeout is the difference between "slow" and
         # "the UI hangs until the OS socket times out."
         timeout = timeout or self.DEFAULT_TIMEOUT_SECONDS
+        # Callers making an unusually heavy/slow request (e.g. a long
+        # multi-section report) can pass a lower max_retries here. With a
+        # larger per-attempt timeout, the default MAX_RETRIES (2, i.e. 3
+        # total attempts) could otherwise stack up to nearly the frontend's
+        # own overall timeout on repeated 429s alone, before even reaching
+        # any fallback provider — capping retries keeps the total worst
+        # case predictable for those heavier calls.
+        retries = self.MAX_RETRIES if max_retries is None else max_retries
         last_error = None
-        for attempt in range(self.MAX_RETRIES + 1):
+        for attempt in range(retries + 1):
             try:
                 response = self.client.chat.completions.create(
                     model=self.model,
@@ -67,7 +75,7 @@ class OpenRouterProvider(BaseLLMProvider):
                 return response.choices[0].message.content.strip()
             except RateLimitError as e:
                 last_error = e
-                if attempt >= self.MAX_RETRIES:
+                if attempt >= retries:
                     break
                 wait = self._retry_after_seconds(e) or (2 ** attempt)
                 # Cap the wait so a single slow request doesn't hang the
@@ -75,7 +83,7 @@ class OpenRouterProvider(BaseLLMProvider):
                 # a fallback beats a long silent hang.
                 wait = min(wait, self.MAX_BACKOFF_SECONDS)
                 print(f"[OpenRouterProvider] 429 rate-limited, retrying in {wait}s "
-                      f"(attempt {attempt + 1}/{self.MAX_RETRIES})...")
+                      f"(attempt {attempt + 1}/{retries})...")
                 time.sleep(wait)
         raise last_error
 

@@ -24,6 +24,7 @@ from services.ai_service import (
 )
 from utils.jwt_handler import token_required
 from services.goal_service import auto_track_progress
+from services.level_progression_service import check_and_promote
 import os
 import re
 import json
@@ -38,14 +39,17 @@ UPLOAD_DIR = "uploads"
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def extract_score(feedback_text: str) -> str:
+def extract_score(feedback_text: str) -> str | None:
     match = re.search(r"Overall Score:\s*(\d+)/10", feedback_text, re.IGNORECASE)
     if match:
         return f"{match.group(1)}/10"
     match = re.search(r"Score:\s*(\d+)%", feedback_text, re.IGNORECASE)
     if match:
         return f"{round(int(match.group(1)) / 10)}/10"
-    return "8/10"
+    # No parsable score in the AI's feedback. This used to invent "8/10",
+    # which inflated averages and would now also count toward automatic
+    # level promotion — so store no score instead (the dashboard shows "—").
+    return None
 
 
 def _save_file(file) -> str:
@@ -260,6 +264,9 @@ def get_session_feedback(payload):
             auto_track_progress(payload["user_id"], session_type)
         except Exception:
             pass  # Never let goal tracking break the main session save
+
+        # Automatic CEFR level progression (never raises).
+        check_and_promote(payload["user_id"])
 
         return jsonify({
             "message": "Session saved successfully",

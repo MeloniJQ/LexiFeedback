@@ -102,7 +102,7 @@ def feedback(payload):
                 title=f"Conversation: {topic_title}",
                 transcript=transcript,
                 feedback=overall.get("summary", ""),
-                score_out_of_10=overall.get("overall_score"),
+                score_out_of_10=None if result.get("is_fallback") else overall.get("overall_score"),
                 duration_seconds=duration_seconds,
             )
         except Exception:

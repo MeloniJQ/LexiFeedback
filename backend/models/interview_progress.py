@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from .user import db
+from utils.time import to_iso_utc
 
 
 class InterviewProgress(db.Model):
@@ -52,6 +53,6 @@ class InterviewProgress(db.Model):
             "role": self.role,
             "snapshot": self.snapshot or {},
             "status": self.status,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "created_at": to_iso_utc(self.created_at),
+            "updated_at": to_iso_utc(self.updated_at),
         }

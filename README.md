@@ -55,26 +55,28 @@ LexiFeed/
 │ ├── app.py
 │ ├── config.py
 │ ├── requirements.txt
-│ ├── agents/ # Agentic interview pipeline (provider-abstracted)
-│ ├── llm/ # AI_PROVIDER abstraction (OpenRouter/OpenAI/Ollama/Gemini)
+│ ├── Dockerfile
+│ ├── agents/
+│ ├── llm/
 │ ├── models/
 │ ├── routes/
-│ │ └── conversation.py # Casual Conversation: topics + feedback endpoints
-│ ├── routes/presentation.py # Presentation practice session logging
 │ ├── services/
-│ │ └── conversation_service.py # Topics data + IELTS-style feedback generation
-│ ├── services/session_logger.py # Shared persistence and goal tracking for practice sessions
-│ ├── templates/ # Reserved for deployment/documentation templates (currently empty)
-│ ├── tests/ # Unit/integration tests
+│ ├── templates/
+│ ├── tests/
 │ └── utils/
-└── frontend/
-├── app/
-├── components/
-│ └── conversation/ # Topic grid, timer, transcript, interactive pronunciation
-├── lib/
-├── hooks/
-│ └── use-voice-recorder.ts # Shared recording hook (mic level, duration, blob)
-└── package.json
+├── frontend/
+│ ├── app/
+│ ├── components/
+│ ├── hooks/
+│ ├── lib/
+│ ├── public/
+│ ├── Dockerfile
+│ ├── package.json
+│ ├── pnpm-lock.yaml
+│ └── next.config.mjs
+├── docker-compose.yml
+├── README.md
+└── .gitignore
 
 ---
 
@@ -82,10 +84,25 @@ LexiFeed/
 
 ### Prerequisites
 
-- **Python 3.8+**
-- **Node.js 18+**
-- **npm**
+- **Python 3.11+** (the backend Docker image uses Python 3.11)
+- **Node.js 20+**
+- **pnpm** (this repo includes a `pnpm-lock.yaml` and the frontend Dockerfile installs it)
 - **LibreOffice** (only required for the PPT upload preview feature — see below)
+
+### Quick Start with Docker
+
+The repository includes a working Docker Compose setup for the full app.
+
+```bash
+docker compose up --build
+```
+
+This starts:
+
+- backend on `http://localhost:5000`
+- frontend on `http://localhost:3000`
+
+> The compose file sets `NEXT_PUBLIC_API_URL=http://localhost:5000/api` for the frontend container, so the browser-facing app can reach the backend without extra configuration.
 
 ### Backend Setup
 
@@ -182,10 +199,11 @@ soffice --version
    cd frontend
 ```
 
-2. Install dependencies:
+2. Install dependencies with pnpm:
 
 ```bash
-   npm install
+   npm install -g pnpm
+   pnpm install
 ```
 
 3. Create a `.env.local` file in `frontend/`:
@@ -206,7 +224,7 @@ soffice --version
 4. Run the frontend:
 
 ```bash
-   npm run dev
+   pnpm dev -- --host 0.0.0.0
 ```
 
 5. Open the app at:
@@ -214,6 +232,8 @@ soffice --version
 ```text
    http://localhost:3000
 ```
+
+> This repo includes a `pnpm-lock.yaml`, so `pnpm` is the expected package manager for local development. The Docker frontend container also installs dependencies with `pnpm install --frozen-lockfile`.
 
 ---
 
@@ -358,7 +378,7 @@ To access LexiFeed from another device on the same network (phone, tablet, anoth
 
 1. Find your machine's local IP address (e.g. `10.221.6.136`) via `ipconfig` (Windows) or `ifconfig`/`hostname -I` (Linux/macOS).
 2. Start the backend — it already binds to `0.0.0.0`, so it's reachable at `http://<YOUR_IP>:5000`.
-3. Start the frontend bound to all interfaces: `npm run dev -- --host 0.0.0.0`, reachable at `http://<YOUR_IP>:3000`.
+3. Start the frontend bound to all interfaces: `pnpm dev -- --host 0.0.0.0`, reachable at `http://<YOUR_IP>:3000`.
 4. Update `frontend/.env.local`: `NEXT_PUBLIC_API_URL=http://<YOUR_IP>:5000/api`.
 5. CORS already allows private-network IP ranges — no extra changes needed.
 6. Open `http://<YOUR_IP>:3000` from the other device's browser.
@@ -387,11 +407,11 @@ To access LexiFeed from another device on the same network (phone, tablet, anoth
 
 ### AI slides show generic content (fallback)
 
-- Check that `GROQ_API_KEY` is set in `frontend/.env.local` and restart `npm run dev` after adding it.
+- Check that `GROQ_API_KEY` is set in `frontend/.env.local` and restart `pnpm dev` after adding it.
 
 ### Popovers, dropdowns, tooltips, or overlays show faded/invisible text
 
-- This project's `tailwind.config.ts` defines custom color tokens (`popover`, `card`, `muted`, `accent`, etc.) that `components/ui/*.tsx` depend on — but Tailwind v4 only loads a JS config file if `frontend/app/globals.css` has an explicit `@config '../tailwind.config.ts';` line right after `@import 'tailwindcss';`. Without it, those tokens silently resolve to nothing. Confirm that line is present, then restart `npm run dev` (a hot-reload alone may not pick up a `@config` change).
+- This project's `tailwind.config.ts` defines custom color tokens (`popover`, `card`, `muted`, `accent`, etc.) that `components/ui/*.tsx` depend on — but Tailwind v4 only loads a JS config file if `frontend/app/globals.css` has an explicit `@config '../tailwind.config.ts';` line right after `@import 'tailwindcss';`. Without it, those tokens silently resolve to nothing. Confirm that line is present, then restart `pnpm dev` (a hot-reload alone may not pick up a `@config` change).
 
 ### Backend feels slow, or requests seem to hang with no error
 

@@ -138,6 +138,8 @@ def feedback(payload):
             accuracy = analysis.get("accuracy_score", 0) or 0
             fluency = analysis.get("fluency_score", 0) or 0
             score_10 = (float(accuracy) + float(fluency)) / 20.0  # two 0-100 scores -> 0-10
+            if analysis.get("is_fallback"):
+                score_10 = None  # local estimate, not a real evaluation — don't store a score
             title = "TV News Anchor Practice" if mode == "journalist" else "Reading Practice"
             log_practice_session(
                 user_id=payload["user_id"],
