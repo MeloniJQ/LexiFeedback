@@ -1,6 +1,7 @@
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
+from utils.time import to_iso_utc
 
 db = SQLAlchemy()
 
@@ -49,12 +50,12 @@ class User(db.Model):
             'full_name': self.full_name,
             'age': self.age,
             'education': self.education,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'created_at': to_iso_utc(self.created_at),
             # CEFR assessment fields — used by the frontend to decide whether
             # to redirect to /assessment and to personalize practice content.
             'english_level': self.english_level,
             'assessment_completed': bool(self.assessment_completed),
-            'assessment_date': self.assessment_date.isoformat() if self.assessment_date else None,
+            'assessment_date': to_iso_utc(self.assessment_date),
             'overall_score': self.overall_score,
             'grammar_score': self.grammar_score,
             'vocabulary_score': self.vocabulary_score,

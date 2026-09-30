@@ -4,7 +4,7 @@ from models import db, User, ReadingPassageHistory
 from utils.jwt_handler import token_required
 from utils.cefr import normalize_level, difficulty_for_level
 from services.ai_service import generate_ai_passage, analyze_pronunciation
-from services.goal_service import auto_track_progress
+from services.session_logger import log_practice_session
 
 reading_bp = Blueprint("reading", __name__)
 
@@ -110,13 +110,16 @@ def feedback(payload):
         "transcript": "what the user said",
         "originalText": "the reference text",
         "difficulty": "...",
-        "mode": "..."
+        "mode": "...",
+        "duration_seconds": 38.5   (optional — how long the reading attempt took)
     }
     """
     try:
         data = request.json or {}
         transcript = data.get("transcript", "").strip()
         original_text = data.get("originalText", "").strip()
+        mode = (data.get("mode") or "standard").lower()
+        duration_seconds = data.get("duration_seconds")
 
         if not original_text:
             return jsonify({"error": "originalText is required"}), 400
@@ -126,10 +129,29 @@ def feedback(payload):
             original_text=original_text,
         )
 
+        # Record this attempt (Progress/Analysis dashboard) + auto-track any
+        # active "Reading Practice" goals in one call. "journalist" mode is
+        # the TV News Anchor practice — tag it distinctly in the title so
+        # it's identifiable in session history, while still rolling up under
+        # the same "reading" session_type/skill bucket for stats.
         try:
-            auto_track_progress(payload["user_id"], "reading")
+            accuracy = analysis.get("accuracy_score", 0) or 0
+            fluency = analysis.get("fluency_score", 0) or 0
+            score_10 = (float(accuracy) + float(fluency)) / 20.0  # two 0-100 scores -> 0-10
+            if analysis.get("is_fallback"):
+                score_10 = None  # local estimate, not a real evaluation — don't store a score
+            title = "TV News Anchor Practice" if mode == "journalist" else "Reading Practice"
+            log_practice_session(
+                user_id=payload["user_id"],
+                session_type="reading",
+                title=title,
+                transcript=transcript,
+                feedback=analysis.get("feedback_markdown", ""),
+                score_out_of_10=score_10,
+                duration_seconds=duration_seconds,
+            )
         except Exception:
-            pass  # never let goal tracking break the main feedback response
+            pass  # never let session logging break the main feedback response
 
         return jsonify(analysis), 200
 

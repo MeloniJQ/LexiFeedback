@@ -1,5 +1,6 @@
 from .user import db
 from datetime import datetime, date
+from utils.time import to_iso_utc
 
 
 VALID_GOAL_TYPES = [
@@ -109,8 +110,8 @@ class Goal(db.Model):
             "targetValue": self.target_value,
             "currentProgress": self.current_progress,
             "deadline": self.deadline.isoformat() if self.deadline else None,
-            "createdAt": self.created_at.isoformat() if self.created_at else None,
-            "updatedAt": self.updated_at.isoformat() if self.updated_at else None,
+            "createdAt": to_iso_utc(self.created_at),
+            "updatedAt": to_iso_utc(self.updated_at),
             "streakCount": self.streak_count,
             "longestStreak": self.longest_streak,
             "lastCompletedDate": self.last_completed_date.isoformat() if self.last_completed_date else None,

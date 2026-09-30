@@ -50,11 +50,25 @@ export default function ReadingPracticePage() {
   // Speech synthesis playback
   const [isPlaying, setIsPlaying] = useState(false)
 
-  // Voice recorder and transcription analysis
+    // Voice recorder and transcription analysis
   const recorder = useVoiceRecorder()
   const [transcript, setTranscript] = useState('')
   const [feedback, setFeedback] = useState<PronunciationFeedback | null>(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
+
+  // Stable playback URL for the user's own recording — created once per
+  // recording, not on every render (fixes playback stopping after a few
+  // seconds).
+  const [audioPlaybackUrl, setAudioPlaybackUrl] = useState<string | null>(null)
+  useEffect(() => {
+    if (!recorder.audioBlob) {
+      setAudioPlaybackUrl(null)
+      return
+    }
+    const url = URL.createObjectURL(recorder.audioBlob)
+    setAudioPlaybackUrl(url)
+    return () => URL.revokeObjectURL(url)
+  }, [recorder.audioBlob])
 
   // Teleprompter auto-scroll state (for journalist mode)
   const [isScrolling, setIsScrolling] = useState(false)
@@ -64,6 +78,17 @@ export default function ReadingPracticePage() {
   // News ticker index
   const [tickerIndex, setTickerIndex] = useState(0)
 
+  // Race-guard for generateNewPassage: React Strict Mode (Next.js dev) fires
+  // effects with an empty dependency array TWICE on mount, which used to fire
+  // two independent /generate requests — whichever one resolved *second*
+  // silently overwrote the passage a moment after the first one rendered,
+  // which is exactly the "loads, then glitches to a different passage a few
+  // seconds later" bug. This counter makes every call to generateNewPassage
+  // identify itself, so a stale (superseded) response is ignored instead of
+  // clobbering state.
+  const requestIdRef = useRef(0)
+  const didInitialFetch = useRef(false)
+
   // ─────────────────────────────────────────────────────────────────────────────
   // Fetch dynamic passage from AI backend
   // ─────────────────────────────────────────────────────────────────────────────
@@ -72,6 +97,7 @@ export default function ReadingPracticePage() {
     selectedMode = mode,
     selectedLength = length
   ) => {
+    const thisRequestId = ++requestIdRef.current
     setLoading(true)
     setError('')
     setFeedback(null)
@@ -100,6 +126,12 @@ export default function ReadingPracticePage() {
         throw new Error(data.error ?? 'Failed to generate passage')
       }
 
+      // A newer call to generateNewPassage started while this one was still
+      // in flight (Strict Mode's double-mount, a fast double-click on "New
+      // Passage", etc.) — that newer call owns the screen now, so this
+      // stale response must NOT overwrite it.
+      if (thisRequestId !== requestIdRef.current) return
+
       setPassage({
         title: data.title,
         content: data.content
@@ -110,12 +142,15 @@ export default function ReadingPracticePage() {
         teleprompterRef.current.scrollTop = 0
       }
     } catch (err: any) {
+      if (thisRequestId !== requestIdRef.current) return
       console.error('Error generating passage:', err)
       setError(err.message ?? 'Error communicating with AI service. Loaded fallback.')
       // Fallback
       setPassage(getFallbackPassage(selectedDifficulty, selectedMode))
     } finally {
-      setLoading(false)
+      if (thisRequestId === requestIdRef.current) {
+        setLoading(false)
+      }
     }
   }
 
@@ -123,7 +158,19 @@ export default function ReadingPracticePage() {
   // (Feature 1 → Feature 3 integration), then generate the initial passage
   // using that resolved difficulty directly (not via state, to avoid a
   // stale-closure race between this effect and the state update).
+  //
+  // CRITICAL: the empty `[]` dependency array at the very end is what makes
+  // this run ONCE on mount. Without it, this effect re-runs after every
+  // render (since generateNewPassage triggers state updates), causing an
+  // infinite fetch loop — the passage flashes in then immediately gets
+  // overwritten by the next call, forever.
   useEffect(() => {
+    // Belt-and-suspenders alongside the requestIdRef guard above: skip the
+    // second of Strict Mode's two mount-effect invocations outright, so we
+    // don't even fire a redundant network request in the first place.
+    if (didInitialFetch.current) return
+    didInitialFetch.current = true
+
     const user = getUser()
     let initialDifficulty = difficulty
     if (user?.english_level) {
@@ -242,11 +289,12 @@ export default function ReadingPracticePage() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({
+          body: JSON.stringify({
           transcript: transcribeData.transcript,
           originalText: passage.content,
           difficulty,
-          mode
+          mode,
+          duration_seconds: transcribeData.duration_seconds ?? recorder.durationMs / 1000
         })
       })
 
@@ -623,7 +671,7 @@ export default function ReadingPracticePage() {
                               <RotateCcw className="w-3.5 h-3.5" /> Re-record
                             </Button>
                             <audio
-                              src={URL.createObjectURL(recorder.audioBlob)}
+                              src={audioPlaybackUrl ?? undefined}
                               controls
                               className="h-8 max-w-[200px] shrink-0"
                             />
@@ -972,7 +1020,7 @@ export default function ReadingPracticePage() {
                               <RotateCcw className="w-3.5 h-3.5" /> Re-shoot
                             </Button>
                             <audio
-                              src={URL.createObjectURL(recorder.audioBlob)}
+                              src={audioPlaybackUrl ?? undefined}
                               controls
                               className="h-8 max-w-[200px] bg-slate-900 border border-slate-800 rounded text-slate-300"
                             />

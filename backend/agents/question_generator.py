@@ -7,6 +7,7 @@ from typing import Any
 from models import CandidateProfile, Question, db
 from llm.provider_factory import get_provider
 from prompts.question_generation import build_question_generation_prompt
+from services.interview_agent import _is_coding_role, _validate_coding_fields, CODING_FALLBACK_POOL
 
 QUESTION_CATEGORIES = [
     "Project",
@@ -19,6 +20,7 @@ QUESTION_CATEGORIES = [
     "Problem Solving",
     "System Design",
     "HR",
+    "Coding",
 ]
 
 QUESTION_DIFFICULTIES = ["Easy", "Medium", "Hard"]
@@ -36,9 +38,16 @@ def generate_questions_from_blueprint(
     count: int = 10,
     mode: str | None = None,
     round_type: str | None = None,
+    wants_coding: bool = False,
 ) -> list[dict[str, Any]]:
     role = blueprint.get("role") or ""
     company = blueprint.get("company") or ""
+
+    # The candidate's explicit choice from the setup screen, combined with
+    # whether this even looks like a coding role — both must be true for a
+    # "Coding" question to ever be generated. If either is false, the prompt
+    # below explicitly forbids code-writing questions of any kind.
+    include_coding = bool(wants_coding) and _is_coding_role(role) and count > 3
 
     provider = get_provider()
     system, user = build_question_generation_prompt(
@@ -47,6 +56,7 @@ def generate_questions_from_blueprint(
         count=count,
         company=company,
         role=role,
+        include_coding=include_coding,
     )
 
     try:
@@ -54,7 +64,7 @@ def generate_questions_from_blueprint(
         questions = _parse_question_set(raw)
         if not questions:
             raise ValueError("Empty question set")
-        questions = _normalize_questions(questions, count, blueprint, candidate_profile)
+        questions = _normalize_questions(questions, count, blueprint, candidate_profile, include_coding)
         if mode or round_type:
             for question in questions:
                 question.setdefault("metadata", {})
@@ -63,7 +73,7 @@ def generate_questions_from_blueprint(
         return questions
     except Exception as exc:
         print(f"[question_generator] Error: {exc}")
-        fallback = _fallback_questions(candidate_profile, blueprint, count)
+        fallback = _fallback_questions(candidate_profile, blueprint, count, include_coding)
         return _apply_opener_and_difficulty_ramp(fallback, blueprint)
 
 
@@ -106,9 +116,10 @@ def _build_opener_question(role: str, company: str) -> dict[str, Any]:
     }
 
 
-def _normalize_questions(raw: list[dict[str, Any]], count: int, blueprint: dict[str, Any], candidate_profile: CandidateProfile) -> list[dict[str, Any]]:
+def _normalize_questions(raw: list[dict[str, Any]], count: int, blueprint: dict[str, Any], candidate_profile: CandidateProfile, include_coding: bool = False) -> list[dict[str, Any]]:
     unique_texts = set()
     normalized: list[dict[str, Any]] = []
+    coding_used = False
 
     for item in raw:
         if not isinstance(item, dict):
@@ -122,12 +133,32 @@ def _normalize_questions(raw: list[dict[str, Any]], count: int, blueprint: dict[
         if key in unique_texts:
             continue
 
+        category = item.get("category") or "Core Technical"
+
+        if category == "Coding":
+            # Never allow a "Coding" question through if the candidate opted
+            # out (or it's not a coding role) — the AI can ignore prompt
+            # instructions, so this is enforced here in code, not just asked
+            # for in the prompt. Also skip a second coding question if the
+            # model returned more than one; only one is supported per session.
+            if not include_coding or coding_used:
+                continue
+            coding_fields = _validate_coding_fields(item)
+            if coding_fields is None:
+                # Missing/malformed test cases — we can NEVER show a "Coding"
+                # question without something for the real compiler to check,
+                # so drop it entirely (a normal question fills this slot via
+                # the fallback-fill logic in _normalize_questions's caller,
+                # or simply one fewer question if the model came up short).
+                continue
+            coding_used = True
+
         unique_texts.add(key)
 
-        normalized.append({
+        entry = {
             "question_id": str(uuid.uuid4()),
             "question_text": text,
-            "category": item.get("category") or "Core Technical",
+            "category": category,
             "topic": item.get("topic") or item.get("project") or "General",
             "difficulty": item.get("difficulty") or "Medium",
             "expected_skills": item.get("expected_skills") or [],
@@ -135,13 +166,24 @@ def _normalize_questions(raw: list[dict[str, Any]], count: int, blueprint: dict[
             "expected_keywords": item.get("expected_keywords") or [],
             "project": item.get("project") or blueprint.get("title") if isinstance(blueprint, dict) else "",
             "metadata": item.get("metadata") or {},
-        })
+        }
+
+        if category == "Coding":
+            # Stored inside metadata (the only JSON blob column the Question
+            # model actually persists) rather than as top-level dict keys,
+            # which would otherwise be silently dropped by save_questions().
+            entry["metadata"] = {**entry["metadata"], "coding": coding_fields}
+
+        normalized.append(entry)
 
         if len(normalized) >= count:
             break
 
     if len(normalized) < count:
-        normalized.extend(_fallback_questions(candidate_profile, blueprint, count - len(normalized)))
+        normalized.extend(_fallback_questions(
+            candidate_profile, blueprint, count - len(normalized),
+            include_coding=(include_coding and not coding_used),
+        ))
 
     normalized = normalized[:count]
     return _apply_opener_and_difficulty_ramp(normalized, blueprint)
@@ -169,7 +211,7 @@ def _apply_opener_and_difficulty_ramp(questions: list[dict[str, Any]], blueprint
     return [opener] + rest
 
 
-def _fallback_questions(candidate_profile: CandidateProfile, blueprint: dict[str, Any], count: int) -> list[dict[str, Any]]:
+def _fallback_questions(candidate_profile: CandidateProfile, blueprint: dict[str, Any], count: int, include_coding: bool = False) -> list[dict[str, Any]]:
     """
     Used ONLY when the live OpenRouter call fails or returns fewer unique
     questions than requested. THIS was the actual root cause of "all 5
@@ -177,13 +219,23 @@ def _fallback_questions(candidate_profile: CandidateProfile, blueprint: dict[str
     in a loop `count` times, with only question_id differing. Now pulls from
     a pool spanning multiple QUESTION_CATEGORIES (technical, scenario, HR,
     behavioral, etc.), shuffled per call so repeated fallbacks aren't identical.
+
+    include_coding: when True, one slot is a real hand-written "Coding"
+    question (from services.interview_agent.CODING_FALLBACK_POOL) with
+    guaranteed-valid test cases — used verbatim, no AI involved, so it
+    always works even when the live AI call has completely failed. When
+    False, no coding question is ever added here, matching the candidate's
+    choice not to include one.
     """
     role = blueprint.get("role") or "" if isinstance(blueprint, dict) else ""
     topic = blueprint.get("domain_summary") or candidate_profile.profile_data.get("job_description", {}).get("preferred_domain", ["General"])[0]
     base_project = blueprint.get("title") or "Candidate Interview"
 
     # (category, question text, difficulty) — tagged so the ramp below can
-    # order easy -> hard even in the local fallback pool.
+    # order easy -> hard even in the local fallback pool. Note the
+    # "Programming" entry is deliberately verbal/conceptual (never asks the
+    # candidate to actually write code) so it's safe to use regardless of
+    # whether coding questions are enabled.
     pool = [
         ("Behavioral", "Tell me about a time you disagreed with a technical decision on your team — how did you handle it?", "Easy"),
         ("HR", "What are you looking for in your next role, and why does this one fit?", "Easy"),
@@ -201,7 +253,38 @@ def _fallback_questions(candidate_profile: CandidateProfile, blueprint: dict[str
     rng.shuffle(pool)
 
     questions = []
+    coding_slot_used = False
     for i in range(count):
+        # Use exactly one of the requested slots for a real coding problem,
+        # picked from anywhere except the very first (that's reserved for
+        # the opener, which _apply_opener_and_difficulty_ramp always
+        # overwrites anyway).
+        if include_coding and not coding_slot_used and i > 0:
+            problem = rng.choice(CODING_FALLBACK_POOL)
+            coding_slot_used = True
+            questions.append({
+                "question_id": str(uuid.uuid4()),
+                "question_text": problem["question"],
+                "category": "Coding",
+                "topic": topic,
+                "difficulty": "Medium",
+                "expected_skills": [topic],
+                "estimated_duration": "15 minutes",
+                "expected_keywords": [topic],
+                "project": base_project,
+                "metadata": {
+                    "fallback": True, "mode": role or "General", "round_type": "Technical Round",
+                    "coding": {
+                        "language": problem["language"],
+                        "function_name": problem["function_name"],
+                        "starter_code": problem["starter_code"],
+                        "examples": problem["examples"],
+                        "test_cases": problem["test_cases"],
+                    },
+                },
+            })
+            continue
+
         category, text, difficulty = pool[i % len(pool)]
         questions.append({
             "question_id": str(uuid.uuid4()),

@@ -3,7 +3,42 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { getPracticeSessions, getPracticeStats } from '@/lib/api'
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line } from 'recharts'
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line, AreaChart, Area } from 'recharts'
+
+const TYPE_COLORS: Record<string, string> = {
+  interview: '#2C5AA0',
+  presentation: '#8B5CF6',
+  conversation: '#10B981',
+  reading: '#F59E0B',
+}
+
+function formatShortDate(iso: string) {
+  const d = new Date(iso + 'T00:00:00')
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+// Full date + time for a session's created_at timestamp (ISO datetime,
+// unlike the plain "YYYY-MM-DD" used by the activity/vocab timelines above).
+function formatSessionDate(iso: string | null | undefined) {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return '—'
+  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) +
+    ' · ' +
+    d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+}
+
+// mm:ss (or Xh Ym for long sessions) from a duration in seconds.
+function formatDuration(seconds: number | null | undefined) {
+  if (seconds === null || seconds === undefined || isNaN(seconds)) return '—'
+  const totalSeconds = Math.round(seconds)
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const secs = totalSeconds % 60
+  if (hours > 0) return `${hours}h ${minutes}m`
+  if (minutes > 0) return `${minutes}m ${secs}s`
+  return `${secs}s`
+}
 
 export default function FeedbackDashboard() {
   const [sessions, setSessions] = useState<any[]>([])
@@ -12,9 +47,15 @@ export default function FeedbackDashboard() {
     total_hours: 0,
     avg_score_pct: 0,
     streak: 0,
-    skills_progress: []
+    skills_progress: [],
+    activity_timeline: [],
+    vocabulary: { total_learned: 0, learned_this_week: 0, timeline: [] },
   })
   const [isLoading, setIsLoading] = useState(true)
+  // The session currently open in the "full feedback" modal, so users can
+  // read the entire AI write-up (not just the truncated table preview) and
+  // actually see what changed/improved between sessions.
+  const [selectedSession, setSelectedSession] = useState<any>(null)
 
   useEffect(() => {
     async function loadDashboardData() {
@@ -42,17 +83,19 @@ export default function FeedbackDashboard() {
         { category: 'Reading', score: 0 },
       ]
 
-  // Map weekly sessions activity from dynamic session dates or mock if empty
-  const sessionData = sessions.length > 0
-    ? sessions.slice(0, 10).reverse().map((s: any, idx: number) => ({
-        week: `S${idx + 1}`,
-        sessions: 1,
-        duration: 10
-      }))
-    : [
-        { week: 'Week 1', sessions: 0, duration: 0 },
-        { week: 'Week 2', sessions: 0, duration: 0 },
-      ]
+  // Real per-day, per-type activity for the last 30 days (all four practice
+  // modes: interview, presentation, conversation, reading/TV-anchor).
+  const activityData = (stats.activity_timeline || []).map((d: any) => ({
+    ...d,
+    label: formatShortDate(d.date),
+  }))
+
+  // Vocabulary learned (Word of the Day saves), cumulative over 30 days.
+  const vocabData = (stats.vocabulary?.timeline || []).map((d: any) => ({
+    ...d,
+    label: formatShortDate(d.date),
+  }))
+  const totalVocabLearned = stats.vocabulary?.total_learned ?? 0
 
   if (isLoading) {
     return (
@@ -141,29 +184,68 @@ export default function FeedbackDashboard() {
           </ResponsiveContainer>
         </div>
 
-        {/* Session Activity */}
+        {/* Session Activity — real per-day counts across all practice modes */}
         <div className="bg-white dark:bg-[#1F2937] border border-gray-200 dark:border-gray-700 rounded-lg p-6">
           <h2 className="text-lg font-semibold text-[#1F2937] dark:text-white mb-4">
             Activity Timeline
           </h2>
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={sessionData}>
+          {activityData.some((d: any) => d.total > 0) ? (
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={activityData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+                <XAxis dataKey="label" stroke="#6B7280" interval={4} />
+                <YAxis stroke="#6B7280" allowDecimals={false} />
+                <Tooltip
+                  contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #4B5563', borderRadius: '8px' }}
+                  labelStyle={{ color: '#F9FAFB' }}
+                />
+                <Legend />
+                <Bar dataKey="interview" name="Interview" stackId="a" fill={TYPE_COLORS.interview} />
+                <Bar dataKey="presentation" name="Presentation" stackId="a" fill={TYPE_COLORS.presentation} />
+                <Bar dataKey="conversation" name="Conversation" stackId="a" fill={TYPE_COLORS.conversation} />
+                <Bar dataKey="reading" name="Reading" stackId="a" fill={TYPE_COLORS.reading} radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="h-[300px] flex items-center justify-center text-[#6B7280] dark:text-gray-400 text-sm">
+              No practice sessions in the last 30 days yet.
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Vocabulary Growth (Word of the Day) */}
+      <div className="bg-white dark:bg-[#1F2937] border border-gray-200 dark:border-gray-700 rounded-lg p-6 mb-8">
+        <h2 className="text-lg font-semibold text-[#1F2937] dark:text-white mb-1">
+          Vocabulary Growth
+        </h2>
+        <p className="text-sm text-[#6B7280] dark:text-gray-400 mb-4">
+          Words &amp; idioms saved from Word of the Day — {totalVocabLearned} learned all-time
+        </p>
+        {totalVocabLearned > 0 ? (
+          <ResponsiveContainer width="100%" height={260}>
+            <AreaChart data={vocabData}>
+              <defs>
+                <linearGradient id="vocabGradientFb" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#0D9488" stopOpacity={0.4} />
+                  <stop offset="95%" stopColor="#0D9488" stopOpacity={0} />
+                </linearGradient>
+              </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
-              <XAxis dataKey="week" stroke="#6B7280" />
-              <YAxis stroke="#6B7280" />
-              <Tooltip 
-                contentStyle={{
-                  backgroundColor: '#1F2937',
-                  border: '1px solid #4B5563',
-                  borderRadius: '8px',
-                }}
+              <XAxis dataKey="label" stroke="#6B7280" interval={4} />
+              <YAxis stroke="#6B7280" allowDecimals={false} />
+              <Tooltip
+                contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #4B5563', borderRadius: '8px' }}
                 labelStyle={{ color: '#F9FAFB' }}
               />
-              <Legend />
-              <Line type="monotone" name="Session Duration (min)" dataKey="duration" stroke="#10B981" strokeWidth={2} />
-            </LineChart>
+              <Area type="monotone" dataKey="cumulative" name="Total words learned" stroke="#0D9488" fill="url(#vocabGradientFb)" strokeWidth={2} />
+            </AreaChart>
           </ResponsiveContainer>
-        </div>
+        ) : (
+          <div className="h-[260px] flex items-center justify-center text-[#6B7280] dark:text-gray-400 text-sm">
+            No words saved yet — save words from your daily Word of the Day to see progress here.
+          </div>
+        )}
       </div>
 
       {/* Recent Sessions */}
@@ -203,22 +285,31 @@ export default function FeedbackDashboard() {
                       {session.title || 'Untitled Session'}
                     </td>
                     <td className="py-3 px-4 text-[#6B7280] dark:text-gray-400">
-                      {new Date(session.created_at).toLocaleDateString(undefined, {
-                        month: 'short',
-                        day: 'numeric',
-                        year: 'numeric'
-                      })}
+                      {formatSessionDate(session.created_at)}
                     </td>
                     <td className="py-3 px-4 text-[#6B7280] dark:text-gray-400">
-                      10 min
+                      {formatDuration(session.duration_seconds)}
                     </td>
                     <td className="py-3 px-4">
                       <span className="inline-block px-3 py-1 rounded-full text-white text-xs font-semibold bg-[#2C5AA0]">
-                        {session.score || '8/10'}
+                        {session.score || '—'}
                       </span>
                     </td>
-                    <td className="py-3 px-4 text-[#6B7280] dark:text-gray-400 text-xs max-w-xs truncate" title={session.feedback}>
-                      {session.feedback}
+                    <td className="py-3 px-4 text-[#6B7280] dark:text-gray-400 text-xs max-w-xs">
+                      {session.feedback ? (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedSession(session)}
+                          className="flex items-center gap-1.5 text-left hover:text-[#2C5AA0] dark:hover:text-[#68A0E0] transition-colors group"
+                        >
+                          <span className="truncate">{session.feedback}</span>
+                          <span className="shrink-0 text-[#2C5AA0] dark:text-[#68A0E0] font-semibold underline-offset-2 group-hover:underline">
+                            View full →
+                          </span>
+                        </button>
+                      ) : (
+                        '—'
+                      )}
                     </td>
                   </tr>
                 ))
@@ -227,6 +318,54 @@ export default function FeedbackDashboard() {
           </table>
         </div>
       </div>
+
+      {/* Full AI Feedback modal — lets the user actually read the entire
+          write-up for a past session (not just the truncated table
+          preview), so they can compare notes across sessions and see how
+          their feedback/scores have changed over time. */}
+      {selectedSession && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
+          onClick={() => setSelectedSession(null)}
+        >
+          <div
+            className="bg-white dark:bg-[#1F2937] rounded-lg shadow-xl w-full max-w-2xl max-h-[85vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4 p-6 border-b border-gray-200 dark:border-gray-700">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-[#2C5AA0] dark:text-[#68A0E0] mb-1">
+                  {selectedSession.session_type}
+                </p>
+                <h3 className="text-lg font-bold text-[#1F2937] dark:text-white">
+                  {selectedSession.title || 'Untitled Session'}
+                </h3>
+                <p className="text-xs text-[#6B7280] dark:text-gray-400 mt-1">
+                  {formatSessionDate(selectedSession.created_at)} · {formatDuration(selectedSession.duration_seconds)}
+                </p>
+              </div>
+              <div className="flex items-center gap-3 shrink-0">
+                <span className="inline-block px-3 py-1 rounded-full text-white text-xs font-semibold bg-[#2C5AA0] whitespace-nowrap">
+                  {selectedSession.score || '—'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedSession(null)}
+                  aria-label="Close"
+                  className="text-[#6B7280] dark:text-gray-400 hover:text-[#1F2937] dark:hover:text-white text-xl leading-none"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+            <div className="p-6 overflow-y-auto">
+              <p className="text-sm text-[#374151] dark:text-gray-300 whitespace-pre-line leading-relaxed">
+                {selectedSession.feedback || 'No feedback text was recorded for this session.'}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -122,7 +122,7 @@ function parseChatJson(rawText: string): { response: string; feedback: string } 
 async function tryGroqChat(systemPrompt: string, userPrompt: string): Promise<string | null> {
   const apiKey = process.env.GROQ_API_KEY
   if (!apiKey) return null
-  const MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'gemma2-9b-it']
+ const MODELS = ['openai/gpt-oss-120b', 'qwen/qwen3.6-27b', 'openai/gpt-oss-20b']
   for (const model of MODELS) {
     try {
       const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {

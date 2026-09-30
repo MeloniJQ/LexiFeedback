@@ -789,5 +789,9 @@ def _fallback_pronunciation_analysis(transcript: str, original_text: str) -> dic
         "fluency_score": fluency,
         "mispronounced_words": mispronounced,
         "added_words": added,
-        "feedback_markdown": feedback
+        "feedback_markdown": feedback,
+        # Local string-match estimate, not an AI review — routes/reading.py
+        # skips storing a score for these so they can't inflate stats or
+        # count toward automatic level progression.
+        "is_fallback": True,
     }

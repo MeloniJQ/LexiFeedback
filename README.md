@@ -13,6 +13,7 @@ LexiFeed is a full-stack web application that helps users practice English inter
 - **Voice transcription and analysis** for spoken answers (local, free transcription via faster-whisper), covering both content and delivery (filler words, pace, structure).
 - **Follow-up question generation** based on candidate responses, including voice-aware follow-ups that reference what was actually said.
 - **Reading practice mode** with AI-generated passages and TV-news-anchor scripts across difficulty levels, plus pronunciation analysis.
+- **Presentation practice mode** — upload or create a presentation, generate or transcribe slide content, practice speaking slide by slide, receive AI feedback, and save completed slide attempts to Progress and goal tracking.
 - **Casual Conversation practice** — pick a predefined topic or type your own, speak for up to 2 minutes with a live voice-level meter, and get an IELTS/TOEFL-style report: verbatim transcript, vocabulary/grammar/fluency/pronunciation breakdown, a rewritten sample response, and vocabulary flashcards. Mispronounced words are clickable inline — hear the correct pronunciation via text-to-speech, view IPA/syllables/stress, and record yourself to compare.
 - **Candidate Intelligence** — resume parsing, job description analysis, and resume/JD match scoring.
 - **Presentation upload preview** — converts uploaded `.ppt`/`.pptx` files to slide images.
@@ -48,29 +49,34 @@ LexiFeed is a full-stack web application that helps users practice English inter
 ---
 
 ## Project Structure
+
 LexiFeed/
 ├── backend/
 │ ├── app.py
 │ ├── config.py
 │ ├── requirements.txt
-│ ├── agents/ # Agentic interview pipeline (provider-abstracted)
-│ ├── llm/ # AI_PROVIDER abstraction (OpenRouter/OpenAI/Ollama/Gemini)
+│ ├── Dockerfile
+│ ├── agents/
+│ ├── llm/
 │ ├── models/
 │ ├── routes/
-│ │ └── conversation.py # Casual Conversation: topics + feedback endpoints
 │ ├── services/
-│ │ └── conversation_service.py # Topics data + IELTS-style feedback generation
-│ ├── templates/ # Reserved for deployment/documentation templates (currently empty)
-│ ├── tests/ # Unit/integration tests
+│ ├── templates/
+│ ├── tests/
 │ └── utils/
-└── frontend/
-├── app/
-├── components/
-│ └── conversation/ # Topic grid, timer, transcript, interactive pronunciation
-├── lib/
-├── hooks/
-│ └── use-voice-recorder.ts # Shared recording hook (mic level, duration, blob)
-└── package.json
+├── frontend/
+│ ├── app/
+│ ├── components/
+│ ├── hooks/
+│ ├── lib/
+│ ├── public/
+│ ├── Dockerfile
+│ ├── package.json
+│ ├── pnpm-lock.yaml
+│ └── next.config.mjs
+├── docker-compose.yml
+├── README.md
+└── .gitignore
 
 ---
 
@@ -78,10 +84,25 @@ LexiFeed/
 
 ### Prerequisites
 
-- **Python 3.8+**
-- **Node.js 18+**
-- **npm**
+- **Python 3.11+** (the backend Docker image uses Python 3.11)
+- **Node.js 20+**
+- **pnpm** (this repo includes a `pnpm-lock.yaml` and the frontend Dockerfile installs it)
 - **LibreOffice** (only required for the PPT upload preview feature — see below)
+
+### Quick Start with Docker
+
+The repository includes a working Docker Compose setup for the full app.
+
+```bash
+docker compose up --build
+```
+
+This starts:
+
+- backend on `http://localhost:5000`
+- frontend on `http://localhost:3000`
+
+> The compose file sets `NEXT_PUBLIC_API_URL=http://localhost:5000/api` for the frontend container, so the browser-facing app can reach the backend without extra configuration.
 
 ### Backend Setup
 
@@ -92,13 +113,15 @@ LexiFeed/
 ```
 
 2. Create and activate a virtual environment:
+   - Windows PowerShell:
 
-   * Windows PowerShell:
 ```powershell
      python -m venv venv
      .\venv\Scripts\Activate.ps1
 ```
-   * macOS/Linux:
+
+- macOS/Linux:
+
 ```bash
      python -m venv venv
      source venv/bin/activate
@@ -131,8 +154,8 @@ LexiFeed/
    WHISPER_MODEL_SIZE=base
 ```
 
-   > Get a free Gemini API key at https://aistudio.google.com/app/apikey
-   > Get a free OpenRouter API key at https://openrouter.ai/keys — `openrouter/free` is OpenRouter's own auto-router, which picks whichever free model currently has capacity (recommended over pinning a single popular free model like `meta-llama/llama-3.3-70b-instruct:free`, which gets rate-limited across all OpenRouter users during busy periods). No credit card required. Browse individual free models (`:free` suffix) at https://openrouter.ai/models?supported_parameters=free
+> Get a free Gemini API key at https://aistudio.google.com/app/apikey
+> Get a free OpenRouter API key at https://openrouter.ai/keys — `openrouter/free` is OpenRouter's own auto-router, which picks whichever free model currently has capacity (recommended over pinning a single popular free model like `meta-llama/llama-3.3-70b-instruct:free`, which gets rate-limited across all OpenRouter users during busy periods). No credit card required. Browse individual free models (`:free` suffix) at https://openrouter.ai/models?supported_parameters=free
 
 5. Start the backend server:
 
@@ -146,15 +169,16 @@ LexiFeed/
    http://localhost:5000/api/health
 ```
 
-   > `app.db` is generated automatically inside `backend/instance/` when the backend starts.
+> `app.db` is generated automatically inside `backend/instance/` when the backend starts.
 
 #### LibreOffice (optional — required only for PPT upload preview)
 
-* **Windows**: Download and install from [libreoffice.org](https://www.libreoffice.org/download/). If installed at a non-default path, update `LIBREOFFICE_PATH` in `backend/routes/presentation_upload.py`.
-* **macOS**: `brew install --cask libreoffice`
-* **Ubuntu/Debian**: `sudo apt update && sudo apt install libreoffice -y`
+- **Windows**: Download and install from [libreoffice.org](https://www.libreoffice.org/download/). If installed at a non-default path, update `LIBREOFFICE_PATH` in `backend/routes/presentation_upload.py`.
+- **macOS**: `brew install --cask libreoffice`
+- **Ubuntu/Debian**: `sudo apt update && sudo apt install libreoffice -y`
 
 Verify with:
+
 ```bash
 # Windows (PowerShell)
 & "C:\Program Files\LibreOffice\program\soffice.exe" --version
@@ -175,10 +199,11 @@ soffice --version
    cd frontend
 ```
 
-2. Install dependencies:
+2. Install dependencies with pnpm:
 
 ```bash
-   npm install
+   npm install -g pnpm
+   pnpm install
 ```
 
 3. Create a `.env.local` file in `frontend/`:
@@ -190,16 +215,16 @@ soffice --version
    PEXELS_API_KEY=your_pexels_api_key_here
 ```
 
-   | Key | Where to get it | Cost |
-   |-----|-------------|------|
-   | `GROQ_API_KEY` | https://console.groq.com | Free |
-   | `GEMINI_API_KEY` | https://aistudio.google.com/app/apikey | Free |
-   | `PEXELS_API_KEY` | https://www.pexels.com/api/ | Free |
+| Key              | Where to get it                        | Cost |
+| ---------------- | -------------------------------------- | ---- |
+| `GROQ_API_KEY`   | https://console.groq.com               | Free |
+| `GEMINI_API_KEY` | https://aistudio.google.com/app/apikey | Free |
+| `PEXELS_API_KEY` | https://www.pexels.com/api/            | Free |
 
 4. Run the frontend:
 
 ```bash
-   npm run dev
+   pnpm dev -- --host 0.0.0.0
 ```
 
 5. Open the app at:
@@ -207,6 +232,8 @@ soffice --version
 ```text
    http://localhost:3000
 ```
+
+> This repo includes a `pnpm-lock.yaml`, so `pnpm` is the expected package manager for local development. The Docker frontend container also installs dependencies with `pnpm install --frozen-lockfile`.
 
 ---
 
@@ -223,16 +250,19 @@ The frontend stores the returned JWT token and sends it in the `Authorization: B
 ## Backend API Endpoints
 
 ### Auth
+
 - `POST /api/auth/signup`
 - `POST /api/auth/login`
 - `GET /api/auth/me`
 
 ### CEFR Initial Assessment
+
 - `GET /api/assessment/status` — Whether the current user has completed the placement test.
 - `GET /api/assessment/start` — Builds a 5-part placement test (grammar, vocabulary, reading, listening, speaking) mixing a static item bank with AI-generated passages.
 - `POST /api/assessment/submit` — Scores the completed test and stores the resulting CEFR level (A1-C2) on the user's profile.
 
 ### Interview Workflows
+
 - `POST /api/interview/start` — Starts a new interview session and returns AI-generated questions. Supports multipart form data, an optional resume upload, and an optional `num_questions` field (1-20, default 5) to control how many questions are generated.
 - `POST /api/interview/questions/generate` — Generates a blueprint-backed interview question set from the latest plan and candidate profile.
 - `GET /api/interview/questions` — Lists generated questions for the current candidate profile.
@@ -247,12 +277,14 @@ The frontend stores the returned JWT token and sends it in the `Authorization: B
 - `POST /api/interview/generate` / `POST /api/interview/upload-resume` — Legacy endpoints.
 
 ### Candidate Intelligence
+
 - `POST /api/candidate/resume/upload` — Upload a PDF resume and extract structured candidate information.
 - `POST /api/candidate/jd/analyze` — Analyze a pasted job description and extract required skills, technologies, responsibilities, preferred experience, and domain tags.
 - `GET /api/candidate/profile` — Return the latest candidate profile including resume data, JD data, and match metadata.
 - `GET /api/candidate/match` — Generate or refresh match results between the resume and JD.
 
 ### Voice Practice
+
 - `POST /api/voice/transcribe`
 - `POST /api/voice/analyze`
 - `POST /api/voice/followup`
@@ -260,21 +292,25 @@ The frontend stores the returned JWT token and sends it in the `Authorization: B
 - `POST /api/voice/session-comparison`
 
 ### Reading Practice
+
 - Routes under `/api/practice/reading` — see `backend/routes/reading.py` for AI passage/news-script generation and pronunciation analysis.
 - Passage generation accepts `level` (CEFR) and `length` (short/medium/long); `level` defaults to the requesting user's assessed CEFR level when not passed explicitly.
 - Every generated passage is logged to `ReadingPassageHistory`, and the last 15 titles (mode-matched, 30-day window) are excluded from future generations to avoid repeats.
 
 ### Casual Conversation
+
 - `GET /api/practice/conversation/topics` — List the 20 predefined topics (title, icon, description, estimated time).
 - `GET /api/practice/conversation/topics/<topic_id>` — Full topic detail (prompt + talking points).
 - `POST /api/practice/conversation/feedback` — Transcript + topic (`topic_id`, or `topic_title`/`topic_prompt` for a custom user-typed topic) + duration → full IELTS-style report (overall score/CEFR level, vocabulary analysis, grammar mistakes, fluency, pronunciation with per-word IPA/syllables/stress, strengths, areas to improve, sample improved response, vocabulary flashcards, quick tips).
 
 ### Vocabulary
+
 - `GET /api/vocabulary` — List the current user's saved words/idioms/phrases, newest first.
 - `POST /api/vocabulary` — Save an entry (idempotent — saving the same entry twice returns the existing row).
 - `DELETE /api/vocabulary/<entry_id>` — Remove a saved entry.
 
 ### Goals
+
 - `GET /api/goals` — List current user's goals.
 - `POST /api/goals` — Create a goal.
 - `GET /api/goals/<id>` — Get a single goal.
@@ -284,9 +320,14 @@ The frontend stores the returned JWT token and sends it in the `Authorization: B
 - `GET /api/goals/stats` — Dashboard summary stats (totals, streaks, average progress).
 
 ### Presentation
+
 - `POST /api/presentation/upload-preview` — Upload `.pptx`/`.ppt`, returns slide images (requires LibreOffice + PyMuPDF).
+- `POST /api/practice/presentation/log` — Save a completed slide practice attempt, including transcript, feedback, score, duration, and automatic matching goal progress.
+
+Presentation feedback, slide generation, and slide transcription use the frontend Next.js API routes under `frontend/app/api/practice/presentation/`; the backend logging endpoint persists completed attempts for the Progress dashboard.
 
 ### Health
+
 - `GET /api/health`
 
 ---
@@ -314,6 +355,7 @@ Transcription time scales with recording length and CPU speed. If transcription 
 ## Core Dependencies
 
 ### Backend
+
 - Flask, Flask-CORS, Flask-SQLAlchemy, SQLAlchemy, Werkzeug
 - PyJWT, python-dotenv
 - openai (OpenRouter/OpenAI-compatible client), requests, google-genai
@@ -323,6 +365,7 @@ Transcription time scales with recording length and CPU speed. If transcription 
 See `backend/requirements.txt` for the full pinned list. If you add a feature that needs a new library, add it there and re-run `pip install -r requirements.txt`.
 
 ### Frontend
+
 - Next.js, React, TypeScript, Tailwind CSS
 - react-hook-form, zod, lucide-react
 - pptxgenjs, jszip
@@ -335,7 +378,7 @@ To access LexiFeed from another device on the same network (phone, tablet, anoth
 
 1. Find your machine's local IP address (e.g. `10.221.6.136`) via `ipconfig` (Windows) or `ifconfig`/`hostname -I` (Linux/macOS).
 2. Start the backend — it already binds to `0.0.0.0`, so it's reachable at `http://<YOUR_IP>:5000`.
-3. Start the frontend bound to all interfaces: `npm run dev -- --host 0.0.0.0`, reachable at `http://<YOUR_IP>:3000`.
+3. Start the frontend bound to all interfaces: `pnpm dev -- --host 0.0.0.0`, reachable at `http://<YOUR_IP>:3000`.
 4. Update `frontend/.env.local`: `NEXT_PUBLIC_API_URL=http://<YOUR_IP>:5000/api`.
 5. CORS already allows private-network IP ranges — no extra changes needed.
 6. Open `http://<YOUR_IP>:3000` from the other device's browser.
@@ -347,28 +390,35 @@ To access LexiFeed from another device on the same network (phone, tablet, anoth
 ## Troubleshooting
 
 ### Backend won't start
+
 - Ensure the virtual environment is activated and `requirements.txt` installed correctly.
 - Check `.env` includes `GEMINI_API_KEY` and, if using the agentic pipeline's default provider, `OPENROUTER_API_KEY`.
 
 ### Frontend can't reach the API
+
 - Verify the backend is running on port `5000`.
 - Confirm `NEXT_PUBLIC_API_URL` is `http://localhost:5000/api`.
 - If CORS errors appear, review the allowed origins in `backend/app.py`.
 
 ### PPT upload shows only 1 slide
+
 - Make sure LibreOffice is fully installed and the path in `backend/routes/presentation_upload.py` matches your installation.
 - Confirm `PyMuPDF` installed correctly (`pip show pymupdf`).
 
 ### AI slides show generic content (fallback)
-- Check that `GROQ_API_KEY` is set in `frontend/.env.local` and restart `npm run dev` after adding it.
+
+- Check that `GROQ_API_KEY` is set in `frontend/.env.local` and restart `pnpm dev` after adding it.
 
 ### Popovers, dropdowns, tooltips, or overlays show faded/invisible text
-- This project's `tailwind.config.ts` defines custom color tokens (`popover`, `card`, `muted`, `accent`, etc.) that `components/ui/*.tsx` depend on — but Tailwind v4 only loads a JS config file if `frontend/app/globals.css` has an explicit `@config '../tailwind.config.ts';` line right after `@import 'tailwindcss';`. Without it, those tokens silently resolve to nothing. Confirm that line is present, then restart `npm run dev` (a hot-reload alone may not pick up a `@config` change).
+
+- This project's `tailwind.config.ts` defines custom color tokens (`popover`, `card`, `muted`, `accent`, etc.) that `components/ui/*.tsx` depend on — but Tailwind v4 only loads a JS config file if `frontend/app/globals.css` has an explicit `@config '../tailwind.config.ts';` line right after `@import 'tailwindcss';`. Without it, those tokens silently resolve to nothing. Confirm that line is present, then restart `pnpm dev` (a hot-reload alone may not pick up a `@config` change).
 
 ### Backend feels slow, or requests seem to hang with no error
+
 - Flask's dev server defaults to handling one request at a time. Make sure `backend/app.py`'s last line includes `threaded=True`: `app.run(debug=True, use_reloader=False, port=5000, host="0.0.0.0", threaded=True)`. This matters especially for Casual Conversation, which makes two sequential slow requests (transcribe, then feedback) per session.
 
 ### Reset the database
+
 ```bash
 cd backend
 rm instance/app.db
@@ -380,18 +430,22 @@ python app.py
 ## Candidate Intelligence Architecture
 
 ### Resume Parsing Pipeline
+
 - `backend/services/resume_parser.py` parses uploaded PDF resumes using `pdfplumber` or `PyPDF2`.
 - Extracted fields include personal info, education, skills, programming languages, frameworks, databases, cloud technologies, projects, certifications, tools, and soft skills.
 - Parsed values are normalized and deduplicated so the backend stores canonical names such as `Python`, `AWS`, and `SaaS`.
 
 ### Job Description Parser
+
 - `backend/services/jd_parser.py` analyzes pasted JD text, extracting required skills, technologies, programming languages, frameworks, database technologies, tools, responsibilities, preferred experience, and preferred domain.
 
 ### Candidate Profile Matching
+
 - `backend/services/match_service.py` compares resume and JD structured data, producing matching/missing skills, a skill match percentage, project/technology match, strengths, and improvement areas.
 - Match data is stored via `backend/models/candidate_profile.py`.
 
 ### JSON Schema Highlights
+
 - Resume profile JSON includes: `candidate_name`, `email`, `phone`, `education`, `skills`, `projects`, `internships`, `certifications`, `tools`, `soft_skills`.
 - JD summary JSON includes: `required_skills`, `required_technologies`, `programming_languages`, `frameworks`, `database_technologies`, `required_tools`, `preferred_experience`, `responsibilities`, `preferred_domain`.
 - Match summary JSON includes: `matching_skills`, `missing_skills`, `skill_match_percentage`, `project_match`, `technology_match`, `strength_areas`, `improvement_areas`.

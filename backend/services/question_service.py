@@ -6,7 +6,7 @@ from services.planning_service import get_latest_interview_plan
 from agents.question_generator import generate_questions_from_blueprint, save_questions
 
 
-def generate_and_save_questions(user_id: int, count: int = 10) -> list[Question]:
+def generate_and_save_questions(user_id: int, count: int = 10, wants_coding: bool = False) -> list[Question]:
     profile = get_latest_candidate_profile(user_id)
     if not profile:
         raise ValueError("No candidate profile found for this user.")
@@ -15,7 +15,7 @@ def generate_and_save_questions(user_id: int, count: int = 10) -> list[Question]
     if not plan:
         raise ValueError("No interview plan available. Generate an interview plan first.")
 
-    questions = generate_questions_from_blueprint(profile, plan.plan_data, count=count)
+    questions = generate_questions_from_blueprint(profile, plan.plan_data, count=count, wants_coding=wants_coding)
 
     Question.query.filter_by(candidate_profile_id=profile.id).delete()
     db.session.commit()

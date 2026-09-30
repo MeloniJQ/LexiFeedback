@@ -195,10 +195,11 @@ export async function endInterviewSession(sessionId: number): Promise<{ session:
 
 export async function generateInterviewQuestions(
   count = 10,
+  wantsCoding = false,
 ): Promise<GenerateQuestionsResponse> {
   return apiCall(`${API}/interview/questions/generate`, {
     method: 'POST',
-    body: JSON.stringify({ count }),
+    body: JSON.stringify({ count, wants_coding: wantsCoding }),
   })
 }
 
@@ -380,6 +381,24 @@ export async function getPracticeSessions(session_type?: string) {
 
 export async function getPracticeStats() {
   return apiCall(`${API_URL}/interview/stats`, { method: 'GET' })
+}
+
+// Presentation feedback is scored client-side (Next.js API route calling
+// Groq directly), so unlike interview/conversation/reading it never touches
+// the backend on its own — this call persists the result so it shows up in
+// Practice Sessions / the Progress dashboard, same as the other three modes.
+export async function logPresentationSession(data: {
+  topic?: string
+  slideNumber?: number
+  transcript: string
+  feedbackText?: string
+  score: number
+  durationSec?: number | null
+}) {
+  return apiCall(`${API_URL}/practice/presentation/log`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
 }
 
 // ─── Goals ────────────────────────────────────────────────────────────────
@@ -580,4 +599,42 @@ export async function submitAssessment(
     method: 'POST',
     body: JSON.stringify(submission),
   })
+}
+
+// ─── Automatic CEFR level progression ─────────────────────────────────────
+
+export interface LevelChange {
+  id: number
+  from_level: string
+  to_level: string
+  avg_score: number | null
+  sessions_considered: number | null
+  reason: string | null
+  seen: boolean
+  created_at: string | null
+}
+
+export interface LevelProgress {
+  current_level: string | null
+  next_level: string | null
+  eligible: boolean
+  sessions_counted?: number
+  sessions_needed?: number
+  avg_score?: number
+  avg_score_needed?: number
+  distinct_modes?: number
+  modes_needed?: number
+  distinct_days?: number
+  days_needed?: number
+  cooldown_days_left?: number
+  history?: LevelChange[]
+  unseen?: LevelChange[]
+}
+
+export async function getLevelProgress(): Promise<LevelProgress> {
+  return apiCall(`${API_URL}/assessment/level-progress`, { method: 'GET' })
+}
+
+export async function markLevelChangesSeen(): Promise<{ message: string }> {
+  return apiCall(`${API_URL}/assessment/level-changes/seen`, { method: 'POST' })
 }

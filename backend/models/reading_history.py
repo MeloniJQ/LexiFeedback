@@ -1,5 +1,6 @@
 from .user import db
 from datetime import datetime
+from utils.time import to_iso_utc
 
 
 class ReadingPassageHistory(db.Model):
@@ -31,5 +32,5 @@ class ReadingPassageHistory(db.Model):
             "difficulty": self.difficulty,
             "level": self.level,
             "length": self.length,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "created_at": to_iso_utc(self.created_at),
         }

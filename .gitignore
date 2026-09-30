@@ -29,6 +29,18 @@ venv_backup/
 __pycache__/
 *.py[cod]
 *.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Test and coverage output
+.coverage
+coverage.xml
+htmlcov/
+
+# Logs
+*.log
 
 # Environment variables
 .env
@@ -47,5 +59,9 @@ venv/
 backend/instance/
 
 *.db
+
+# Next.js static export and common build output
+frontend/out/
+.turbo/
 
 uploads/

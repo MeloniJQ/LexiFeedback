@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from .user import db
+from utils.time import to_iso_utc
 
 
 class InterviewSession(db.Model):
@@ -35,12 +36,12 @@ class InterviewSession(db.Model):
             'status': self.status,
             'current_difficulty': self.current_difficulty,
             'current_topic': self.current_topic,
-            'started_at': self.started_at.isoformat() if self.started_at else None,
-            'paused_at': self.paused_at.isoformat() if self.paused_at else None,
-            'completed_at': self.completed_at.isoformat() if self.completed_at else None,
+            'started_at': to_iso_utc(self.started_at),
+            'paused_at': to_iso_utc(self.paused_at),
+            'completed_at': to_iso_utc(self.completed_at),
             'metadata': self.meta_data or {},
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'created_at': to_iso_utc(self.created_at),
+            'updated_at': to_iso_utc(self.updated_at),
         }
 
 
@@ -69,7 +70,7 @@ class InterviewQuestionHistory(db.Model):
             'difficulty': self.difficulty,
             'answer_text': self.answer_text,
             'is_followup': self.is_followup,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'created_at': to_iso_utc(self.created_at),
         }
 
 
@@ -89,8 +90,8 @@ class ConversationMemory(db.Model):
             'interview_session_id': self.interview_session_id,
             'memory_type': self.memory_type,
             'memory_data': self.memory_data or {},
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'created_at': to_iso_utc(self.created_at),
+            'updated_at': to_iso_utc(self.updated_at),
         }
 
 
@@ -138,8 +139,8 @@ class AnswerEvaluation(db.Model):
             'missing_topics': self.missing_topics,
             'suggestions': self.suggestions,
             'raw_analysis': self.raw_analysis or {},
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'created_at': to_iso_utc(self.created_at),
+            'updated_at': to_iso_utc(self.updated_at),
         }
 
 
@@ -189,6 +190,6 @@ class InterviewEvaluation(db.Model):
             'recommendations': self.recommendations,
             'summary': self.summary or {},
             'raw_analysis': self.raw_analysis or {},
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'created_at': to_iso_utc(self.created_at),
+            'updated_at': to_iso_utc(self.updated_at),
         }

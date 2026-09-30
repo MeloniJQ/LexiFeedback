@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from .user import db
+from utils.time import to_iso_utc
 
 
 class InterviewPlan(db.Model):
@@ -26,6 +27,6 @@ class InterviewPlan(db.Model):
             "id": self.id,
             "candidate_profile_id": self.candidate_profile_id,
             "plan_data": self.plan_data or {},
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "created_at": to_iso_utc(self.created_at),
+            "updated_at": to_iso_utc(self.updated_at),
         }

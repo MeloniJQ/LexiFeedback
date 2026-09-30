@@ -13,7 +13,7 @@ from services.conversation_service import (
     get_topic_by_id,
     generate_conversation_feedback,
 )
-from services.goal_service import auto_track_progress
+from services.session_logger import log_practice_session
 
 conversation_bp = Blueprint("conversation", __name__)
 
@@ -92,12 +92,21 @@ def feedback(payload):
             duration_seconds=duration_seconds,
         )
 
-        # Auto-track progress on any active "Casual Conversation" goals,
-        # same pattern used by interview.py / reading.py.
+        # Record this attempt (Progress/Analysis dashboard) + auto-track any
+        # active "Casual Conversation" goals in one call.
         try:
-            auto_track_progress(payload["user_id"], "conversation")
+            overall = result.get("overall", {}) if isinstance(result, dict) else {}
+            log_practice_session(
+                user_id=payload["user_id"],
+                session_type="conversation",
+                title=f"Conversation: {topic_title}",
+                transcript=transcript,
+                feedback=overall.get("summary", ""),
+                score_out_of_10=None if result.get("is_fallback") else overall.get("overall_score"),
+                duration_seconds=duration_seconds,
+            )
         except Exception:
-            pass  # never let goal tracking break the main feedback response
+            pass  # never let session logging break the main feedback response
 
         return jsonify(result), 200
 
