@@ -52,7 +52,23 @@ QUESTION_TYPES = [
     "situational",
     "culture-fit",
     "resume-specific",
+    "coding",
 ]
+
+# Roles where it makes sense to ask an actual coding question (write real
+# code, executed against real test cases) rather than just talking about
+# code. Substring match against the role text, e.g. "Senior Backend Engineer"
+# matches "engineer".
+CODING_ROLE_KEYWORDS = [
+    "developer", "engineer", "programmer", "swe", "software",
+    "full stack", "full-stack", "backend", "frontend", "front-end",
+    "back-end", "coding", "sde",
+]
+
+
+def _is_coding_role(role: str) -> bool:
+    role_lower = (role or "").lower()
+    return any(kw in role_lower for kw in CODING_ROLE_KEYWORDS)
 
 
 ROLE_SKILL_MAP = {
@@ -158,6 +174,44 @@ def build_question_generation_prompt(context: dict, num_questions: int = 10) -> 
 
     language_level_clause = _cefr_language_clause(context.get("english_level"))
 
+    # For developer/engineering roles, replace one "technical" slot with a
+    # real hands-on coding question — one the candidate actually writes code
+    # for, which then gets RUN against real test cases (see
+    # services/code_execution_service.py) instead of just talked about.
+    is_coding_role = _is_coding_role(context["role"])
+    n_coding = 1 if (is_coding_role and n_technical > 1) else 0
+    n_technical = n_technical - n_coding
+
+    coding_block = ""
+    coding_schema_line = ""
+    if n_coding:
+        coding_block = f"""
+6. {n_coding} question (type "coding"): a REAL, self-contained coding problem the candidate
+   must write actual code for (like a real technical screen — e.g. two-sum-style array/string/
+   hash-map problems, not open-ended design). Requirements for this question specifically:
+   - "language" must be either "python" or "javascript".
+   - "function_name" is the exact function name the candidate must define (snake_case for
+     python, camelCase for javascript).
+   - "starter_code" is a short function stub/signature only (no implementation), matching
+     "function_name" exactly, in the chosen "language".
+   - "examples" is 1-2 human-readable {{"input": "...", "output": "..."}} pairs shown to the
+     candidate as a description of expected behaviour.
+   - "test_cases" is 3-5 objects: {{"input": [<arg1>, <arg2>, ...], "expected_output": <value>}}.
+     CRITICAL: "input" must be a JSON array of the EXACT positional arguments passed to
+     "function_name", and "expected_output" must be the EXACT JSON-serialisable return value —
+     these are fed directly into a real interpreter, so they must be 100% correct and
+     unambiguous (no floats where exactness can't be guaranteed, no stdout-based problems).
+   - Keep the problem solvable in 10-15 minutes — moderate difficulty, not a leetcode-hard.
+"""
+        coding_schema_line = (
+            '\n  {"id": 3, "type": "coding", "question": "...", "hint": "...", '
+            '"language": "python", "function_name": "two_sum", '
+            '"starter_code": "def two_sum(nums, target):\\n    pass", '
+            '"examples": [{"input": "nums=[2,7,11,15], target=9", "output": "[0,1]"}], '
+            '"test_cases": [{"input": [[2,7,11,15], 9], "expected_output": [0,1]}]}'
+        )
+
+
     system = (
         "You are a senior technical interviewer with 10+ years of experience running real "
         "interviews at top tech companies. You design realistic, professional mock interviews, "
@@ -196,7 +250,7 @@ REQUIRED STRUCTURE (exactly {num_questions} questions total):
 5. {n_culture} questions (type "culture-fit"): HR-style questions about motivation, values,
    teamwork, or conflict, tied to the company's culture signals where possible. If this is the
    last question, make it a natural closing question.
-
+{coding_block}
 RULES
 - Every question must feel specific to THIS candidate/role/company — never interchangeable
   templates.
@@ -210,7 +264,7 @@ RULES
 Return ONLY a JSON array in this exact shape, with ids 1..{num_questions} in interview order:
 [
   {{"id": 1, "type": "behavioral", "question": "...", "hint": "..."}},
-  {{"id": 2, "type": "technical", "question": "...", "hint": "..."}}
+  {{"id": 2, "type": "technical", "question": "...", "hint": "..."}}{coding_schema_line}
 ]
 """
     return system, user
@@ -250,15 +304,29 @@ def validate_questions(raw_questions, context: dict, num_questions: int = 10) ->
         if key in seen:
             continue
 
-        seen.add(key)
-        used_types.add(qtype)
-
-        normalized.append({
+        entry = {
             "id": len(normalized) + 1,
             "type": qtype,
             "question": question,
             "hint": hint or _default_hint(qtype, context),
-        })
+        }
+
+        if qtype == "coding":
+            coding_fields = _validate_coding_fields(item)
+            if coding_fields is None:
+                # The model didn't return usable/runnable test cases — we
+                # can NEVER show a "coding" question without them (there'd
+                # be nothing for the compiler to check), so downgrade this
+                # one question to "technical" rather than dropping it or
+                # silently shipping a broken coding UI.
+                entry["type"] = "technical"
+                entry["hint"] = hint or _default_hint("technical", context)
+            else:
+                entry.update(coding_fields)
+
+        seen.add(key)
+        used_types.add(entry["type"])
+        normalized.append(entry)
 
         if len(normalized) >= num_questions:
             break
@@ -344,9 +412,18 @@ def generate_fallback_questions(context: dict, count: int = 10) -> list[dict]:
     n_resume = max(1, round(count * 0.2))
     n_situational = max(1, round(count * 0.2))
     n_culture = max(1, count - 1 - n_technical - n_resume - n_situational)
+
+    # Same swap as the AI prompt path: for a coding role, one "technical"
+    # slot becomes a real, hand-written "coding" question with guaranteed-
+    # valid test cases (these are used verbatim — no AI involved — so they
+    # always work even when the live AI call has completely failed).
+    n_coding = 1 if (_is_coding_role(role) and n_technical > 1) else 0
+    n_technical = n_technical - n_coding
+
     sequence = (
         ["behavioral"]
         + ["technical"] * n_technical
+        + ["coding"] * n_coding
         + ["resume-specific"] * n_resume
         + ["situational"] * n_situational
         + ["culture-fit"] * n_culture
@@ -357,11 +434,14 @@ def generate_fallback_questions(context: dict, count: int = 10) -> list[dict]:
 
     questions = []
     used_per_category: dict[str, set] = {}
+    used_coding_ids: set = set()
 
     for i in range(count):
         if i == 0:
             q = f"To start, could you tell me a bit about yourself and your interest in the {role} role at {company}?"
             qtype = "behavioral"
+        elif sequence[i] == "coding":
+            qtype = "coding"
         else:
             qtype = sequence[i]
             pool = list(fallback_pools.get(qtype, fallback_pools["behavioral"]))
@@ -372,14 +452,77 @@ def generate_fallback_questions(context: dict, count: int = 10) -> list[dict]:
                 q = rng.choice(pool)  # pool exhausted (rare) — reuse rather than crash
             used.add(q)
 
-        questions.append({
-            "id": i + 1,
-            "type": qtype,
-            "question": q,
-            "hint": _default_hint(qtype, context),
-        })
+        if qtype == "coding":
+            available = [c for c in CODING_FALLBACK_POOL if c["question"] not in used_coding_ids]
+            problem = rng.choice(available or CODING_FALLBACK_POOL)
+            used_coding_ids.add(problem["question"])
+            questions.append({
+                "id": i + 1,
+                "type": "coding",
+                "question": problem["question"],
+                "hint": _default_hint("coding", context),
+                "language": problem["language"],
+                "function_name": problem["function_name"],
+                "starter_code": problem["starter_code"],
+                "examples": problem["examples"],
+                "test_cases": problem["test_cases"],
+            })
+        else:
+            questions.append({
+                "id": i + 1,
+                "type": qtype,
+                "question": q,
+                "hint": _default_hint(qtype, context),
+            })
 
     return questions
+
+
+# Hand-written, guaranteed-runnable coding problems used only when the live
+# AI question-generation call fails entirely. These are deliberately simple,
+# classic problems so the test cases below are unambiguously correct.
+CODING_FALLBACK_POOL = [
+    {
+        "question": "Write a function that takes an array of integers and a target sum, and returns "
+                     "the indices of the two numbers that add up to the target. Assume exactly one "
+                     "valid answer exists.",
+        "language": "python",
+        "function_name": "two_sum",
+        "starter_code": "def two_sum(nums, target):\n    pass",
+        "examples": [{"input": "nums=[2,7,11,15], target=9", "output": "[0,1]"}],
+        "test_cases": [
+            {"input": [[2, 7, 11, 15], 9], "expected_output": [0, 1]},
+            {"input": [[3, 2, 4], 6], "expected_output": [1, 2]},
+            {"input": [[3, 3], 6], "expected_output": [0, 1]},
+        ],
+    },
+    {
+        "question": "Write a function that checks whether a given string is a palindrome, ignoring "
+                     "case and non-alphanumeric characters.",
+        "language": "python",
+        "function_name": "is_palindrome",
+        "starter_code": "def is_palindrome(s):\n    pass",
+        "examples": [{"input": "s='A man, a plan, a canal: Panama'", "output": "True"}],
+        "test_cases": [
+            {"input": ["A man, a plan, a canal: Panama"], "expected_output": True},
+            {"input": ["race a car"], "expected_output": False},
+            {"input": [""], "expected_output": True},
+        ],
+    },
+    {
+        "question": "Write a function that returns the first non-repeating character in a string, "
+                     "or an empty string if every character repeats.",
+        "language": "javascript",
+        "function_name": "firstUniqueChar",
+        "starter_code": "function firstUniqueChar(s) {\n  \n}",
+        "examples": [{"input": "s='swiss'", "output": "'w'"}],
+        "test_cases": [
+            {"input": ["swiss"], "expected_output": "w"},
+            {"input": ["aabbcc"], "expected_output": ""},
+            {"input": ["z"], "expected_output": "z"},
+        ],
+    },
+]
 
 
 # -----------------------------
@@ -498,6 +641,62 @@ def _question_key(q: str):
     return re.sub(r'[^a-z0-9]', '', q.lower())
 
 
+def _validate_coding_fields(item: dict) -> dict | None:
+    """
+    Validates that a "coding" question actually has everything needed to run
+    for real (language, function name, and at least one well-formed test
+    case). Returns None if anything required is missing/malformed, so the
+    caller can safely downgrade the question instead of shipping a coding
+    UI with nothing for the compiler to execute.
+    """
+    language = str(item.get("language", "")).strip().lower()
+    if language not in ("python", "javascript"):
+        return None
+
+    function_name = str(item.get("function_name", "")).strip()
+    if not function_name or not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", function_name):
+        return None
+
+    starter_code = str(item.get("starter_code", "")).strip()
+    if not starter_code:
+        return None
+
+    raw_test_cases = item.get("test_cases")
+    if not isinstance(raw_test_cases, list) or not raw_test_cases:
+        return None
+
+    clean_cases = []
+    for case in raw_test_cases:
+        if not isinstance(case, dict) or "input" not in case or "expected_output" not in case:
+            continue
+        if not isinstance(case["input"], list):
+            continue
+        try:
+            json.dumps(case["input"])
+            json.dumps(case["expected_output"])
+        except (TypeError, ValueError):
+            continue
+        clean_cases.append({"input": case["input"], "expected_output": case["expected_output"]})
+
+    if not clean_cases:
+        return None
+
+    raw_examples = item.get("examples")
+    examples = []
+    if isinstance(raw_examples, list):
+        for ex in raw_examples:
+            if isinstance(ex, dict) and "input" in ex and "output" in ex:
+                examples.append({"input": str(ex["input"]), "output": str(ex["output"])})
+
+    return {
+        "language": language,
+        "function_name": function_name,
+        "starter_code": starter_code,
+        "examples": examples,
+        "test_cases": clean_cases,
+    }
+
+
 def _default_hint(qtype: str, context: dict):
     hints = {
         "behavioral": "Use the STAR method: Situation, Task, Action, Result.",
@@ -505,6 +704,7 @@ def _default_hint(qtype: str, context: dict):
         "technical": "Explain your reasoning and trade-offs, not just the final answer.",
         "resume-specific": "Be concrete — name the project, your specific role, and the outcome.",
         "culture-fit": "Be authentic and back your answer with a real example.",
+        "coding": "Write clean, working code — think about edge cases before you submit.",
     }
     return hints.get(qtype, f"Answer using clear, structured reasoning for a {qtype} question.")
 

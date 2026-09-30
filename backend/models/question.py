@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from .user import db
+from utils.time import to_iso_utc
 
 
 class Question(db.Model):
@@ -44,6 +45,6 @@ class Question(db.Model):
             "expected_keywords": self.expected_keywords or [],
             "project": self.project,
             "metadata": self.meta_data or {},
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "created_at": to_iso_utc(self.created_at),
+            "updated_at": to_iso_utc(self.updated_at),
         }

@@ -17,6 +17,7 @@ function instead of two.
 
 from models import db, PracticeSession
 from services.goal_service import auto_track_progress
+from services.level_progression_service import check_and_promote
 
 
 def log_practice_session(
@@ -69,5 +70,10 @@ def log_practice_session(
         auto_track_progress(user_id, session_type)
     except Exception:
         pass  # never let goal tracking break the caller's main response
+
+    # Automatic CEFR level progression — promotes the user one level when
+    # their recent sessions justify it (see level_progression_service.py).
+    # check_and_promote never raises, so it can't break the caller either.
+    check_and_promote(user_id)
 
     return record

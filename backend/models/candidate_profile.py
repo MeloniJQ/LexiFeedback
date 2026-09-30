@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from .user import db
+from utils.time import to_iso_utc
 
 
 class ResumeData(db.Model):
@@ -24,7 +25,7 @@ class ResumeData(db.Model):
             "filename": self.filename,
             "file_type": self.file_type,
             "parsed_data": self.parsed_data or {},
-            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "created_at": to_iso_utc(self.created_at),
         }
 
 
@@ -45,7 +46,7 @@ class JobDescriptionData(db.Model):
             "id": self.id,
             "user_id": self.user_id,
             "parsed_data": self.parsed_data or {},
-            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "created_at": to_iso_utc(self.created_at),
         }
 
 
@@ -73,8 +74,8 @@ class CandidateProfile(db.Model):
             "profile_data": self.profile_data or {},
             "resume_data": self.resume_data.to_dict() if self.resume_data else None,
             "job_description_data": self.job_description_data.to_dict() if self.job_description_data else None,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "created_at": to_iso_utc(self.created_at),
+            "updated_at": to_iso_utc(self.updated_at),
         }
 
 
@@ -93,5 +94,5 @@ class ProfileMatch(db.Model):
             "id": self.id,
             "candidate_profile_id": self.candidate_profile_id,
             "match_data": self.match_data or {},
-            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "created_at": to_iso_utc(self.created_at),
         }

@@ -17,9 +17,10 @@ import threading
 from datetime import datetime
 
 from flask import Blueprint, request, jsonify
-from models import db, User
+from models import db, User, LevelChange
 from utils.jwt_handler import token_required
 from services.assessment_service import build_assessment, score_assessment
+from services.level_progression_service import get_progress
 
 assessment_bp = Blueprint("assessment", __name__)
 
@@ -39,6 +40,33 @@ def status(payload):
         "english_level": user.english_level,
         "assessment_date": user.assessment_date.isoformat() if user.assessment_date else None,
     }), 200
+
+
+@assessment_bp.route("/level-progress", methods=["GET"])
+@token_required
+def level_progress(payload):
+    """
+    Progress toward the next CEFR level (driven by mock-session scores — see
+    services/level_progression_service.py), plus level-change history and
+    any promotions the user hasn't dismissed yet (`unseen`).
+    """
+    user = User.query.get(payload["user_id"])
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    return jsonify(get_progress(user)), 200
+
+
+@assessment_bp.route("/level-changes/seen", methods=["POST"])
+@token_required
+def level_changes_seen(payload):
+    """Marks all of this user's promotion notifications as seen (banner dismissed)."""
+    try:
+        LevelChange.query.filter_by(user_id=payload["user_id"], seen=False).update({"seen": True})
+        db.session.commit()
+        return jsonify({"message": "ok"}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
 
 
 @assessment_bp.route("/start", methods=["GET"])

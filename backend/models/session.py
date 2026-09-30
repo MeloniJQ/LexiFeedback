@@ -1,5 +1,6 @@
 from .user import db
 from datetime import datetime
+from utils.time import to_iso_utc
 
 class PracticeSession(db.Model):
     __tablename__ = 'practice_sessions'
@@ -27,5 +28,5 @@ class PracticeSession(db.Model):
             'feedback': self.feedback,
             'score': self.score,
             'duration_seconds': self.duration_seconds,
-            'created_at': self.created_at.isoformat() if self.created_at else None
+            'created_at': to_iso_utc(self.created_at)
         }
