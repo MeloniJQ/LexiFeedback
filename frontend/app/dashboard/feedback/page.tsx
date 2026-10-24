@@ -2,20 +2,8 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { getPracticeSessions, getPracticeStats } from '@/lib/api'
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line, AreaChart, Area } from 'recharts'
-
-const TYPE_COLORS: Record<string, string> = {
-  interview: '#2C5AA0',
-  presentation: '#8B5CF6',
-  conversation: '#10B981',
-  reading: '#F59E0B',
-}
-
-function formatShortDate(iso: string) {
-  const d = new Date(iso + 'T00:00:00')
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-}
+import { loadAnalytics, peekAnalyticsCache } from '@/lib/api'
+import { PracticeGraphs, AnalyticsBanner, StatCard, ModeBadge, ScoreBadge, modeLabel, sessionMode } from '@/components/analytics/practice-charts'
 
 // Full date + time for a session's created_at timestamp (ISO datetime,
 // unlike the plain "YYYY-MM-DD" used by the activity/vocab timelines above).
@@ -58,10 +46,16 @@ export default function FeedbackDashboard() {
   const [selectedSession, setSelectedSession] = useState<any>(null)
 
   useEffect(() => {
+    // Show the last result instantly if we have one, then refresh in the background.
+    const cached = peekAnalyticsCache()
+    if (cached) {
+      setSessions(cached.sessions)
+      setStats(cached.stats)
+      setIsLoading(false)
+    }
     async function loadDashboardData() {
       try {
-        const fetchedSessions = await getPracticeSessions()
-        const fetchedStats = await getPracticeStats()
+        const { sessions: fetchedSessions, stats: fetchedStats } = await loadAnalytics(!!cached)
         setSessions(fetchedSessions)
         setStats(fetchedStats)
       } catch (err) {
@@ -72,30 +66,6 @@ export default function FeedbackDashboard() {
     }
     loadDashboardData()
   }, [])
-
-  // Map backend stats.skills_progress or fallback to categories
-  const progressData = stats.skills_progress && stats.skills_progress.length > 0
-    ? stats.skills_progress.map((s: any) => ({ category: s.skill.replace(' Practice', '').replace(' Skills', '').replace(' Fluency', '').replace(' Comprehension', ''), score: s.progress }))
-    : [
-        { category: 'Interview', score: 0 },
-        { category: 'Presentation', score: 0 },
-        { category: 'Conversation', score: 0 },
-        { category: 'Reading', score: 0 },
-      ]
-
-  // Real per-day, per-type activity for the last 30 days (all four practice
-  // modes: interview, presentation, conversation, reading/TV-anchor).
-  const activityData = (stats.activity_timeline || []).map((d: any) => ({
-    ...d,
-    label: formatShortDate(d.date),
-  }))
-
-  // Vocabulary learned (Word of the Day saves), cumulative over 30 days.
-  const vocabData = (stats.vocabulary?.timeline || []).map((d: any) => ({
-    ...d,
-    label: formatShortDate(d.date),
-  }))
-  const totalVocabLearned = stats.vocabulary?.total_learned ?? 0
 
   if (isLoading) {
     return (
@@ -110,148 +80,31 @@ export default function FeedbackDashboard() {
 
   return (
     <div className="max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-[#1F2937] dark:text-white mb-2">
-          Your Progress
-        </h1>
-        <p className="text-[#6B7280] dark:text-gray-400">
-          Track your English learning improvements and performance metrics
-        </p>
-      </div>
+      <AnalyticsBanner
+        title="Analytics & Feedback"
+        subtitle="Track your English learning improvements across Interview, Presentation, Conversation, Reading and TV News Anchor practice"
+      />
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-        <div className="bg-white dark:bg-[#1F2937] border border-gray-200 dark:border-gray-700 rounded-lg p-6 hover:shadow-md transition-shadow">
-          <p className="text-[#6B7280] dark:text-gray-400 text-sm font-medium">
-            Total Sessions
-          </p>
-          <p className="text-3xl font-bold text-[#1F2937] dark:text-white mt-2">
-            {stats.total_sessions}
-          </p>
-        </div>
-
-        <div className="bg-white dark:bg-[#1F2937] border border-gray-200 dark:border-gray-700 rounded-lg p-6 hover:shadow-md transition-shadow">
-          <p className="text-[#6B7280] dark:text-gray-400 text-sm font-medium">
-            Estimated Hours
-          </p>
-          <p className="text-3xl font-bold text-[#1F2937] dark:text-white mt-2">
-            {stats.total_hours}h
-          </p>
-        </div>
-
-        <div className="bg-white dark:bg-[#1F2937] border border-gray-200 dark:border-gray-700 rounded-lg p-6 hover:shadow-md transition-shadow">
-          <p className="text-[#6B7280] dark:text-gray-400 text-sm font-medium">
-            Average Score
-          </p>
-          <p className="text-3xl font-bold text-[#2C5AA0] dark:text-white mt-2">
-            {stats.avg_score_pct}%
-          </p>
-        </div>
-
-        <div className="bg-white dark:bg-[#1F2937] border border-gray-200 dark:border-gray-700 rounded-lg p-6 hover:shadow-md transition-shadow">
-          <p className="text-[#6B7280] dark:text-gray-400 text-sm font-medium">
-            Current Streak
-          </p>
-          <p className="text-3xl font-bold text-[#10B981] dark:text-[#68D391] mt-2">
-            {stats.streak} {stats.streak === 1 ? 'day' : 'days'}
-          </p>
-        </div>
+        <StatCard label="Total Sessions" icon={<span>📊</span>} value={stats.total_sessions} color="blue" />
+        <StatCard label="Estimated Hours" icon={<span>⏱️</span>} value={`${stats.total_hours}h`} color="purple" />
+        <StatCard label="Average Score" icon={<span>⭐</span>} value={`${stats.avg_score_pct}%`} color="emerald" />
+        <StatCard
+          label="Current Streak"
+          icon={<span>🔥</span>}
+          value={`${stats.streak} ${stats.streak === 1 ? 'day' : 'days'}`}
+          color="orange"
+        />
       </div>
 
-      {/* Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-        {/* Skills Progress */}
-        <div className="bg-white dark:bg-[#1F2937] border border-gray-200 dark:border-gray-700 rounded-lg p-6">
-          <h2 className="text-lg font-semibold text-[#1F2937] dark:text-white mb-4">
-            Skills Progress
-          </h2>
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={progressData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
-              <XAxis dataKey="category" stroke="#6B7280" />
-              <YAxis stroke="#6B7280" domain={[0, 100]} />
-              <Tooltip 
-                contentStyle={{
-                  backgroundColor: '#1F2937',
-                  border: '1px solid #4B5563',
-                  borderRadius: '8px',
-                }}
-                labelStyle={{ color: '#F9FAFB' }}
-              />
-              <Bar dataKey="score" fill="#2C5AA0" radius={[8, 8, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-
-        {/* Session Activity — real per-day counts across all practice modes */}
-        <div className="bg-white dark:bg-[#1F2937] border border-gray-200 dark:border-gray-700 rounded-lg p-6">
-          <h2 className="text-lg font-semibold text-[#1F2937] dark:text-white mb-4">
-            Activity Timeline
-          </h2>
-          {activityData.some((d: any) => d.total > 0) ? (
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={activityData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
-                <XAxis dataKey="label" stroke="#6B7280" interval={4} />
-                <YAxis stroke="#6B7280" allowDecimals={false} />
-                <Tooltip
-                  contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #4B5563', borderRadius: '8px' }}
-                  labelStyle={{ color: '#F9FAFB' }}
-                />
-                <Legend />
-                <Bar dataKey="interview" name="Interview" stackId="a" fill={TYPE_COLORS.interview} />
-                <Bar dataKey="presentation" name="Presentation" stackId="a" fill={TYPE_COLORS.presentation} />
-                <Bar dataKey="conversation" name="Conversation" stackId="a" fill={TYPE_COLORS.conversation} />
-                <Bar dataKey="reading" name="Reading" stackId="a" fill={TYPE_COLORS.reading} radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="h-[300px] flex items-center justify-center text-[#6B7280] dark:text-gray-400 text-sm">
-              No practice sessions in the last 30 days yet.
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Vocabulary Growth (Word of the Day) */}
-      <div className="bg-white dark:bg-[#1F2937] border border-gray-200 dark:border-gray-700 rounded-lg p-6 mb-8">
-        <h2 className="text-lg font-semibold text-[#1F2937] dark:text-white mb-1">
-          Vocabulary Growth
-        </h2>
-        <p className="text-sm text-[#6B7280] dark:text-gray-400 mb-4">
-          Words &amp; idioms saved from Word of the Day — {totalVocabLearned} learned all-time
-        </p>
-        {totalVocabLearned > 0 ? (
-          <ResponsiveContainer width="100%" height={260}>
-            <AreaChart data={vocabData}>
-              <defs>
-                <linearGradient id="vocabGradientFb" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#0D9488" stopOpacity={0.4} />
-                  <stop offset="95%" stopColor="#0D9488" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
-              <XAxis dataKey="label" stroke="#6B7280" interval={4} />
-              <YAxis stroke="#6B7280" allowDecimals={false} />
-              <Tooltip
-                contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #4B5563', borderRadius: '8px' }}
-                labelStyle={{ color: '#F9FAFB' }}
-              />
-              <Area type="monotone" dataKey="cumulative" name="Total words learned" stroke="#0D9488" fill="url(#vocabGradientFb)" strokeWidth={2} />
-            </AreaChart>
-          </ResponsiveContainer>
-        ) : (
-          <div className="h-[260px] flex items-center justify-center text-[#6B7280] dark:text-gray-400 text-sm">
-            No words saved yet — save words from your daily Word of the Day to see progress here.
-          </div>
-        )}
-      </div>
+      {/* Graphs — shared with the Analytics page; every graph labels its axes + scale */}
+      <PracticeGraphs stats={stats} sessions={sessions} />
 
       {/* Recent Sessions */}
-      <div className="bg-white dark:bg-[#1F2937] border border-gray-200 dark:border-gray-700 rounded-lg p-6">
+      <div className="bg-white dark:bg-[#1F2937] border border-gray-200 dark:border-gray-700 border-t-4 border-t-[#2C5AA0] rounded-xl p-6 shadow-sm">
         <h2 className="text-lg font-semibold text-[#1F2937] dark:text-white mb-4">
-          Session Feedback History
+          🗂️ Session Feedback History
         </h2>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -278,8 +131,8 @@ export default function FeedbackDashboard() {
                     key={session.id}
                     className="border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-[#374151] transition-colors"
                   >
-                    <td className="py-3 px-4 text-[#1F2937] dark:text-white font-medium capitalize">
-                      {session.session_type}
+                    <td className="py-3 px-4">
+                      <ModeBadge session={session} />
                     </td>
                     <td className="py-3 px-4 text-[#1F2937] dark:text-white">
                       {session.title || 'Untitled Session'}
@@ -291,9 +144,7 @@ export default function FeedbackDashboard() {
                       {formatDuration(session.duration_seconds)}
                     </td>
                     <td className="py-3 px-4">
-                      <span className="inline-block px-3 py-1 rounded-full text-white text-xs font-semibold bg-[#2C5AA0]">
-                        {session.score || '—'}
-                      </span>
+                      <ScoreBadge score={session.score} />
                     </td>
                     <td className="py-3 px-4 text-[#6B7280] dark:text-gray-400 text-xs max-w-xs">
                       {session.feedback ? (
@@ -335,7 +186,7 @@ export default function FeedbackDashboard() {
             <div className="flex items-start justify-between gap-4 p-6 border-b border-gray-200 dark:border-gray-700">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-[#2C5AA0] dark:text-[#68A0E0] mb-1">
-                  {selectedSession.session_type}
+                  {modeLabel(sessionMode(selectedSession))}
                 </p>
                 <h3 className="text-lg font-bold text-[#1F2937] dark:text-white">
                   {selectedSession.title || 'Untitled Session'}
@@ -345,9 +196,7 @@ export default function FeedbackDashboard() {
                 </p>
               </div>
               <div className="flex items-center gap-3 shrink-0">
-                <span className="inline-block px-3 py-1 rounded-full text-white text-xs font-semibold bg-[#2C5AA0] whitespace-nowrap">
-                  {selectedSession.score || '—'}
-                </span>
+                <ScoreBadge score={selectedSession.score} />
                 <button
                   type="button"
                   onClick={() => setSelectedSession(null)}

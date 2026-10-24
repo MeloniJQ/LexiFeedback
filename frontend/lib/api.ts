@@ -366,6 +366,7 @@ export async function submitPracticeFeedback(data: {
   session_type?: string
   title?: string
 }) {
+  clearAnalyticsCache()
   return apiCall(`${API_URL}/interview/feedback`, {
     method: 'POST',
     body:   JSON.stringify(data),
@@ -381,6 +382,30 @@ export async function getPracticeSessions(session_type?: string) {
 
 export async function getPracticeStats() {
   return apiCall(`${API_URL}/interview/stats`, { method: 'GET' })
+}
+
+// PERFORMANCE: the Analytics & Feedback and Progress pages both need sessions
+// AND stats. Fetch them in parallel (not one after the other) and keep the
+// last result for a short while so moving between pages / revisiting is instant.
+// The cache is cleared whenever a new practice session is saved.
+let analyticsCache: { at: number; data: { sessions: any[]; stats: any } } | null = null
+const ANALYTICS_TTL_MS = 60_000
+
+export function peekAnalyticsCache() {
+  return analyticsCache ? analyticsCache.data : null
+}
+
+export function clearAnalyticsCache() {
+  analyticsCache = null
+}
+
+export async function loadAnalytics(force = false): Promise<{ sessions: any[]; stats: any }> {
+  if (!force && analyticsCache && Date.now() - analyticsCache.at < ANALYTICS_TTL_MS) {
+    return analyticsCache.data
+  }
+  const [sessions, stats] = await Promise.all([getPracticeSessions(), getPracticeStats()])
+  analyticsCache = { at: Date.now(), data: { sessions, stats } }
+  return analyticsCache.data
 }
 
 // Presentation feedback is scored client-side (Next.js API route calling

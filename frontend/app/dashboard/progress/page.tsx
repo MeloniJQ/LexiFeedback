@@ -2,33 +2,10 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { getPracticeStats, getPracticeSessions } from '@/lib/api'
+import { loadAnalytics, peekAnalyticsCache } from '@/lib/api'
 import { Progress } from '@/components/ui/progress'
 import { TrendingUp, Calendar, Target, Award, BookOpen } from 'lucide-react'
-import {
-  ResponsiveContainer,
-  AreaChart,
-  Area,
-  BarChart,
-  Bar,
-  CartesianGrid,
-  XAxis,
-  YAxis,
-  Tooltip,
-  Legend,
-} from 'recharts'
-
-const TYPE_COLORS: Record<string, string> = {
-  interview: '#2C5AA0',
-  presentation: '#8B5CF6',
-  conversation: '#10B981',
-  reading: '#F59E0B',
-}
-
-function formatShortDate(iso: string) {
-  const d = new Date(iso + 'T00:00:00')
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-}
+import { PracticeGraphs, AnalyticsBanner, StatCard, modeLabel, sessionMode, TYPE_COLORS } from '@/components/analytics/practice-charts'
 
 export default function ProgressPage() {
   const [stats, setStats] = useState<any>({
@@ -44,10 +21,16 @@ export default function ProgressPage() {
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
+    // Show the last result instantly if we have one, then refresh in the background.
+    const cached = peekAnalyticsCache()
+    if (cached) {
+      setStats(cached.stats)
+      setSessions(cached.sessions)
+      setIsLoading(false)
+    }
     async function loadStats() {
       try {
-        const fetchedStats = await getPracticeStats()
-        const fetchedSessions = await getPracticeSessions()
+        const { sessions: fetchedSessions, stats: fetchedStats } = await loadAnalytics(!!cached)
         setStats(fetchedStats)
         setSessions(fetchedSessions)
       } catch (err) {
@@ -73,80 +56,29 @@ export default function ProgressPage() {
   // Calculate dynamic goals based on session milestones
   const goalsAchieved = Math.floor(stats.total_sessions / 2)
 
-  const activityChartData = (stats.activity_timeline || []).map((d: any) => ({
-    ...d,
-    label: formatShortDate(d.date),
-  }))
-  const vocabChartData = (stats.vocabulary?.timeline || []).map((d: any) => ({
-    ...d,
-    label: formatShortDate(d.date),
-  }))
   const totalVocabLearned = stats.vocabulary?.total_learned ?? 0
   const vocabThisWeek = stats.vocabulary?.learned_this_week ?? 0
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-[#1F2937] dark:text-white mb-2">
-          Your Progress
-        </h1>
-        <p className="text-[#6B7280] dark:text-gray-400">
-          Track your learning journey and see how you're improving
-        </p>
-      </div>
+      <AnalyticsBanner
+        title="Analytics & Feedback"
+        subtitle="Track your learning journey across every practice mode and see how you're improving"
+      />
 
       {/* Overall Stats */}
       <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
-        <div className="bg-white dark:bg-[#1F2937] rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-          <div className="flex items-center gap-3 mb-2">
-            <Calendar className="w-6 h-6 text-blue-600" />
-            <h3 className="font-semibold text-[#1F2937] dark:text-white">Total Sessions</h3>
-          </div>
-          <p className="text-3xl font-bold text-[#1F2937] dark:text-white">{stats.total_sessions}</p>
-          <p className="text-sm text-[#6B7280] dark:text-gray-400">All-time count</p>
-        </div>
-
-        <div className="bg-white dark:bg-[#1F2937] rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-          <div className="flex items-center gap-3 mb-2">
-            <TrendingUp className="w-6 h-6 text-green-600" />
-            <h3 className="font-semibold text-[#1F2937] dark:text-white">Average Score</h3>
-          </div>
-          <p className="text-3xl font-bold text-[#1F2937] dark:text-white">{stats.avg_score_pct}%</p>
-          <p className="text-sm text-[#6B7280] dark:text-gray-400">Overall efficiency</p>
-        </div>
-
-        <div className="bg-white dark:bg-[#1F2937] rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-          <div className="flex items-center gap-3 mb-2">
-            <Target className="w-6 h-6 text-purple-600" />
-            <h3 className="font-semibold text-[#1F2937] dark:text-white">Goals Achieved</h3>
-          </div>
-          <p className="text-3xl font-bold text-[#1F2937] dark:text-white">{goalsAchieved}</p>
-          <p className="text-sm text-[#6B7280] dark:text-gray-400">Milestones completed</p>
-        </div>
-
-        <div className="bg-white dark:bg-[#1F2937] rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-          <div className="flex items-center gap-3 mb-2">
-            <Award className="w-6 h-6 text-orange-600" />
-            <h3 className="font-semibold text-[#1F2937] dark:text-white">Current Streak</h3>
-          </div>
-          <p className="text-3xl font-bold text-[#1F2937] dark:text-white">{stats.streak}</p>
-          <p className="text-sm text-[#6B7280] dark:text-gray-400">{stats.streak === 1 ? 'Day' : 'Days'}</p>
-        </div>
-
-        <div className="bg-white dark:bg-[#1F2937] rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-          <div className="flex items-center gap-3 mb-2">
-            <BookOpen className="w-6 h-6 text-teal-600" />
-            <h3 className="font-semibold text-[#1F2937] dark:text-white">Words Learned</h3>
-          </div>
-          <p className="text-3xl font-bold text-[#1F2937] dark:text-white">{totalVocabLearned}</p>
-          <p className="text-sm text-[#6B7280] dark:text-gray-400">+{vocabThisWeek} this week</p>
-        </div>
+        <StatCard label="Total Sessions" icon={<Calendar className="w-5 h-5" />} value={stats.total_sessions} sub="All-time count" color="blue" />
+        <StatCard label="Average Score" icon={<TrendingUp className="w-5 h-5" />} value={`${stats.avg_score_pct}%`} sub="Overall efficiency" color="emerald" />
+        <StatCard label="Goals Achieved" icon={<Target className="w-5 h-5" />} value={goalsAchieved} sub="Milestones completed" color="purple" />
+        <StatCard label="Current Streak" icon={<Award className="w-5 h-5" />} value={stats.streak} sub={stats.streak === 1 ? 'Day' : 'Days'} color="orange" />
+        <StatCard label="Words Learned" icon={<BookOpen className="w-5 h-5" />} value={totalVocabLearned} sub={`+${vocabThisWeek} this week`} color="teal" />
       </div>
 
       {/* Skill Progress */}
-      <div className="bg-white dark:bg-[#1F2937] rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+      <div className="bg-white dark:bg-[#1F2937] rounded-xl border border-gray-200 dark:border-gray-700 border-t-4 border-t-[#8B5CF6] shadow-sm p-6">
         <h2 className="text-xl font-semibold text-[#1F2937] dark:text-white mb-6">
-          Skill Progress
+          🎯 Skill Progress
         </h2>
 
         <div className="space-y-6">
@@ -178,84 +110,13 @@ export default function ProgressPage() {
         </div>
       </div>
 
-      {/* Activity + Vocabulary Graphs */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white dark:bg-[#1F2937] rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-          <h2 className="text-xl font-semibold text-[#1F2937] dark:text-white mb-1">
-            Practice Activity
-          </h2>
-          <p className="text-sm text-[#6B7280] dark:text-gray-400 mb-4">
-            Sessions per day, last 30 days — every mode
-          </p>
-          {activityChartData.some((d: any) => d.total > 0) ? (
-            <ResponsiveContainer width="100%" height={280}>
-              <BarChart data={activityChartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
-                <XAxis dataKey="label" stroke="#6B7280" interval={4} />
-                <YAxis stroke="#6B7280" allowDecimals={false} />
-                <Tooltip
-                  contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #4B5563', borderRadius: '8px' }}
-                  labelStyle={{ color: '#F9FAFB' }}
-                />
-                <Legend />
-                <Bar dataKey="interview" name="Interview" stackId="a" fill={TYPE_COLORS.interview} />
-                <Bar dataKey="presentation" name="Presentation" stackId="a" fill={TYPE_COLORS.presentation} />
-                <Bar dataKey="conversation" name="Conversation" stackId="a" fill={TYPE_COLORS.conversation} />
-                <Bar dataKey="reading" name="Reading" stackId="a" fill={TYPE_COLORS.reading} radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          ) : (
-            <p className="text-[#6B7280] dark:text-gray-400 text-sm py-16 text-center">
-              No practice sessions in the last 30 days yet.
-            </p>
-          )}
-        </div>
-
-        <div className="bg-white dark:bg-[#1F2937] rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-          <h2 className="text-xl font-semibold text-[#1F2937] dark:text-white mb-1">
-            Vocabulary Growth
-          </h2>
-          <p className="text-sm text-[#6B7280] dark:text-gray-400 mb-4">
-            Words &amp; idioms saved from Word of the Day, last 30 days
-          </p>
-          {totalVocabLearned > 0 ? (
-            <ResponsiveContainer width="100%" height={280}>
-              <AreaChart data={vocabChartData}>
-                <defs>
-                  <linearGradient id="vocabGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#0D9488" stopOpacity={0.4} />
-                    <stop offset="95%" stopColor="#0D9488" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
-                <XAxis dataKey="label" stroke="#6B7280" interval={4} />
-                <YAxis stroke="#6B7280" allowDecimals={false} />
-                <Tooltip
-                  contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #4B5563', borderRadius: '8px' }}
-                  labelStyle={{ color: '#F9FAFB' }}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="cumulative"
-                  name="Total words learned"
-                  stroke="#0D9488"
-                  fill="url(#vocabGradient)"
-                  strokeWidth={2}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          ) : (
-            <p className="text-[#6B7280] dark:text-gray-400 text-sm py-16 text-center">
-              No words saved yet. Save words from your daily Word of the Day to see progress here.
-            </p>
-          )}
-        </div>
-      </div>
+      {/* Graphs — shared with the Feedback page; every graph labels its axes + scale */}
+      <PracticeGraphs stats={stats} sessions={sessions} />
 
       {/* Recent Activity */}
-      <div className="bg-white dark:bg-[#1F2937] rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+      <div className="bg-white dark:bg-[#1F2937] rounded-xl border border-gray-200 dark:border-gray-700 border-t-4 border-t-[#10B981] shadow-sm p-6">
         <h2 className="text-xl font-semibold text-[#1F2937] dark:text-white mb-6">
-          Recent Activity
+          ⚡ Recent Activity
         </h2>
 
         <div className="space-y-4">
@@ -264,9 +125,8 @@ export default function ProgressPage() {
               No recent practice sessions recorded. Go to <Link href="/practice/interview" className="text-[#2C5AA0] font-semibold hover:underline">Interview Practice</Link> to start!
             </div>
           ) : (
-            sessions.slice(0, 3).map((session, index) => {
-              const colors = ["bg-green-500", "bg-blue-500", "bg-purple-500"]
-              const color = colors[index % colors.length]
+            sessions.slice(0, 3).map((session) => {
+              const dotColor = TYPE_COLORS[sessionMode(session)] || '#6B7280'
               const dateStr = new Date(session.created_at).toLocaleDateString(undefined, {
                 month: 'short',
                 day: 'numeric',
@@ -275,10 +135,10 @@ export default function ProgressPage() {
 
               return (
                 <div key={session.id} className="flex items-center gap-4 p-4 bg-gray-50 dark:bg-[#374151] rounded-lg hover:shadow-sm transition-shadow">
-                  <div className={`w-2 h-2 ${color} rounded-full`}></div>
+                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: dotColor }}></div>
                   <div className="flex-1">
-                    <p className="text-[#1F2937] dark:text-white font-medium capitalize">
-                      Completed {session.session_type} Session
+                    <p className="text-[#1F2937] dark:text-white font-medium">
+                      Completed {modeLabel(sessionMode(session))} Session
                     </p>
                     <p className="text-sm text-[#6B7280] dark:text-gray-400">
                       {dateStr} • Score: {session.score || '8/10'}

@@ -250,7 +250,7 @@ export default function CasualConversationPage() {
   }
 
   return (
-    <div className="min-h-screen bg-white dark:bg-black">
+    <div className="min-h-screen app-bg">
       <div className="absolute top-6 right-6 flex gap-2">
         {stage !== 'topics' && (
           <Button variant="ghost" onClick={handleFullRestart} className="gap-2 text-sm">

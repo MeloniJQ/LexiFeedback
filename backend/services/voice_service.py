@@ -47,6 +47,7 @@ from dotenv import load_dotenv
 
 from services.interview_agent import build_followup_prompt, fallback_followup, parse_json_object
 from llm.provider_factory import get_provider
+from utils.cefr import cefr_language_clause
 
 load_dotenv()
 
@@ -268,6 +269,7 @@ def analyze_voice_answer(
     role:              str,
     duration_seconds:  float = 0,
     word_count:        int   = 0,
+    english_level:     str | None = None,
 ) -> dict:
     """
     Deep analysis of the transcribed answer, covering:
@@ -316,6 +318,11 @@ DELIVERY METRICS (pre-computed):
 
 TRANSCRIPT:
 \"\"\"{transcript}\"\"\"
+
+IMPORTANT — how to WORD your feedback text (relevance/specificity/comments/top_tip):
+{cefr_language_clause(english_level, subject="feedback comment") or "Use normal, clear professional coaching language."}
+(Your scores and judgement of quality must stay equally rigorous regardless of level — only
+the WORDING of the feedback text itself should be simpler or more advanced to match.)
 
 Return ONLY this JSON (no markdown fences, no extra keys):
 {{
@@ -387,6 +394,7 @@ def generate_voice_followup(
     company:            str,
     role:               str,
     previous_followups: list[dict] | None = None,
+    english_level:      str | None = None,
 ) -> dict:
     """
     Generate a follow-up question that specifically references what the
@@ -428,6 +436,7 @@ def generate_voice_followup(
         previous_pairs=previous_followups,
         company=company,
         role=role,
+        english_level=english_level,
     )
 
     try:

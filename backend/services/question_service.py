@@ -1,6 +1,6 @@
 from typing import Any
 
-from models import CandidateProfile, InterviewPlan, Question, db
+from models import CandidateProfile, InterviewPlan, Question, User, db
 from services.candidate_profile import get_latest_candidate_profile
 from services.planning_service import get_latest_interview_plan
 from agents.question_generator import generate_questions_from_blueprint, save_questions
@@ -15,8 +15,15 @@ def generate_and_save_questions(user_id: int, count: int = 10, wants_coding: boo
     if not plan:
         raise ValueError("No interview plan available. Generate an interview plan first.")
 
-    questions = generate_questions_from_blueprint(profile, plan.plan_data, count=count, wants_coding=wants_coding)
+    # Wire in the user's assessed CEFR level so question WORDING scales to
+    # them (see utils/cefr.py) — subject-matter difficulty is untouched,
+    # only the language used to phrase each question.
+    user = User.query.get(user_id)
+    english_level = user.english_level if user else None
 
+    questions = generate_questions_from_blueprint(
+        profile, plan.plan_data, count=count, wants_coding=wants_coding, english_level=english_level,
+    )
     Question.query.filter_by(candidate_profile_id=profile.id).delete()
     db.session.commit()
 

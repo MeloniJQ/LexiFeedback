@@ -918,7 +918,7 @@ export default function InterviewPracticePage() {
   // ─────────────────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen bg-white dark:bg-black">
+    <div className="min-h-screen app-bg">
       <div className="absolute top-6 right-6 flex gap-2">
         {stage !== 'setup' && (
           <Button variant="ghost" onClick={handleReset} className="gap-2 text-sm">

@@ -41,7 +41,7 @@ export default function ReadingPracticePage() {
   const [difficulty, setDifficulty] = useState<'beginner' | 'intermediate' | 'advanced'>('intermediate')
   const [length, setLength] = useState<'short' | 'medium' | 'long'>('medium')
   const [mode, setMode] = useState<'standard' | 'journalist'>('standard')
-  
+
   // Passage and loading
   const [passage, setPassage] = useState<ReadingPassage | null>(null)
   const [loading, setLoading] = useState(false)
@@ -50,7 +50,7 @@ export default function ReadingPracticePage() {
   // Speech synthesis playback
   const [isPlaying, setIsPlaying] = useState(false)
 
-    // Voice recorder and transcription analysis
+  // Voice recorder and transcription analysis
   const recorder = useVoiceRecorder()
   const [transcript, setTranscript] = useState('')
   const [feedback, setFeedback] = useState<PronunciationFeedback | null>(null)
@@ -76,7 +76,6 @@ export default function ReadingPracticePage() {
   const teleprompterRef = useRef<HTMLDivElement>(null)
 
   // News ticker index
-  const [tickerIndex, setTickerIndex] = useState(0)
 
   // Race-guard for generateNewPassage: React Strict Mode (Next.js dev) fires
   // effects with an empty dependency array TWICE on mount, which used to fire
@@ -188,37 +187,67 @@ export default function ReadingPracticePage() {
     generateNewPassage(initialDifficulty, mode, length)
   }, [])
 
-  // Rotate ticker messages in TV mode
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setTickerIndex((prev) => (prev + 1) % NEWS_TICKERS.length)
-    }, 8000)
-    return () => clearInterval(interval)
-  }, [])
 
-  // Teleprompter requestAnimationFrame scroll loop
-  useEffect(() => {
-    if (!isScrolling || !teleprompterRef.current) return
+  // Teleprompter auto-scroll
+  // Teleprompter auto-scroll
+useEffect(() => {
+  if (!isScrolling) return
 
-    let animationFrameId: number
-    const scroll = () => {
-      if (teleprompterRef.current) {
-        // speed scaling
-        const speedMultiplier = scrollSpeed === 1 ? 0.3 : scrollSpeed === 2 ? 0.6 : 1.2
-        teleprompterRef.current.scrollTop += speedMultiplier
+  let animationFrameId: number
+  let lastTime = performance.now()
 
-        const maxScroll = teleprompterRef.current.scrollHeight - teleprompterRef.current.clientHeight
-        if (teleprompterRef.current.scrollTop >= maxScroll - 0.5) {
-          setIsScrolling(false)
-          return
-        }
-      }
+  // Keep the fractional scroll position separately.
+  let scrollPosition = teleprompterRef.current?.scrollTop ?? 0
+
+  // Clearly different reading speeds
+  const pixelsPerSecond =
+    scrollSpeed === 1 ? 12 :
+    scrollSpeed === 2 ? 40 :
+    80
+
+  const scroll = (currentTime: number) => {
+    const element = teleprompterRef.current
+
+    if (!element) {
       animationFrameId = requestAnimationFrame(scroll)
+      return
+    }
+
+    const deltaTime = Math.min(
+      (currentTime - lastTime) / 1000,
+      0.1
+    )
+
+    lastTime = currentTime
+
+    const maxScroll = Math.max(
+      0,
+      element.scrollHeight - element.clientHeight
+    )
+
+    if (maxScroll > 0) {
+      // Accumulate fractional movement so even slow speeds move smoothly
+      scrollPosition += pixelsPerSecond * deltaTime
+
+      if (scrollPosition >= maxScroll) {
+        scrollPosition = maxScroll
+        element.scrollTop = maxScroll
+        setIsScrolling(false)
+        return
+      }
+
+      element.scrollTop = scrollPosition
     }
 
     animationFrameId = requestAnimationFrame(scroll)
-    return () => cancelAnimationFrame(animationFrameId)
-  }, [isScrolling, scrollSpeed])
+  }
+
+  animationFrameId = requestAnimationFrame(scroll)
+
+  return () => {
+    cancelAnimationFrame(animationFrameId)
+  }
+}, [isScrolling, scrollSpeed])
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Text-To-Speech Playback
@@ -289,7 +318,7 @@ export default function ReadingPracticePage() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-          body: JSON.stringify({
+        body: JSON.stringify({
           transcript: transcribeData.transcript,
           originalText: passage.content,
           difficulty,
@@ -397,14 +426,14 @@ export default function ReadingPracticePage() {
   }
 
   return (
-    <div className="flex h-screen bg-white dark:bg-[#0F172A]">
+    <div className="flex h-screen app-bg">
       <Sidebar />
       <div className="flex-1 flex flex-col overflow-hidden">
         <Header />
 
         <main className="flex-1 overflow-y-auto p-6 lg:p-8">
           <div className="max-w-4xl mx-auto space-y-6">
-            
+
             {/* Header info */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div>
@@ -421,22 +450,20 @@ export default function ReadingPracticePage() {
               <div className="inline-flex rounded-lg bg-gray-100 dark:bg-gray-800 p-1 self-start md:self-auto border border-gray-200 dark:border-gray-700">
                 <button
                   onClick={() => { setMode('standard'); generateNewPassage(difficulty, 'standard', length) }}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-semibold transition ${
-                    mode === 'standard'
+                  className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-semibold transition ${mode === 'standard'
                       ? 'bg-white dark:bg-gray-950 text-indigo-600 dark:text-indigo-400 shadow-sm'
                       : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
-                  }`}
+                    }`}
                 >
                   <BookOpen className="w-4 h-4" />
                   Standard
                 </button>
                 <button
                   onClick={() => { setMode('journalist'); generateNewPassage(difficulty, 'journalist', length) }}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-semibold transition ${
-                    mode === 'journalist'
+                  className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-semibold transition ${mode === 'journalist'
                       ? 'bg-white dark:bg-gray-950 text-red-600 dark:text-red-400 shadow-sm'
                       : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
-                  }`}
+                    }`}
                 >
                   <Tv className="w-4 h-4" />
                   TV News Anchor
@@ -453,8 +480,8 @@ export default function ReadingPracticePage() {
             )}
 
             {/* Difficulty Selector and Generation Control */}
-            <div className="bg-white dark:bg-[#1E293B] rounded-xl border border-gray-200 dark:border-gray-800 p-5 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
-              <div className="flex flex-col sm:flex-row gap-4">
+{mode === 'standard' && (
+  <div className="bg-white dark:bg-[#1E293B] rounded-xl border border-gray-200 dark:border-gray-800 p-5 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">              <div className="flex flex-col sm:flex-row gap-4">
                 <div className="space-y-1 self-start sm:self-auto">
                   <label className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
                     Difficulty Level
@@ -464,11 +491,10 @@ export default function ReadingPracticePage() {
                       <button
                         key={level}
                         onClick={() => { setDifficulty(level); generateNewPassage(level, mode, length) }}
-                        className={`px-3 py-1.5 rounded-full text-xs font-bold border transition capitalize ${
-                          difficulty === level
+                        className={`px-3 py-1.5 rounded-full text-xs font-bold border transition capitalize ${difficulty === level
                             ? 'bg-indigo-600 border-indigo-600 text-white dark:bg-indigo-500 dark:border-indigo-500'
                             : 'bg-transparent border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'
-                        }`}
+                          }`}
                       >
                         {level}
                       </button>
@@ -485,11 +511,10 @@ export default function ReadingPracticePage() {
                       <button
                         key={len}
                         onClick={() => { setLength(len); generateNewPassage(difficulty, mode, len) }}
-                        className={`px-3 py-1.5 rounded-full text-xs font-bold border transition capitalize ${
-                          length === len
+                        className={`px-3 py-1.5 rounded-full text-xs font-bold border transition capitalize ${length === len
                             ? 'bg-indigo-600 border-indigo-600 text-white dark:bg-indigo-500 dark:border-indigo-500'
                             : 'bg-transparent border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'
-                        }`}
+                          }`}
                       >
                         {len}
                       </button>
@@ -517,13 +542,13 @@ export default function ReadingPracticePage() {
                 )}
               </Button>
             </div>
-
+)}
             {/* ─────────────────────────────────────────────────────────────────────────────
                 MODE 1: STANDARD READING MODE
                 ───────────────────────────────────────────────────────────────────────────── */}
             {mode === 'standard' && (
               <div className="grid grid-cols-1 gap-6">
-                
+
                 {/* Passage card */}
                 <div className="bg-white dark:bg-[#1E293B] rounded-2xl border border-gray-200 dark:border-gray-800 p-6 shadow-sm space-y-6">
                   {loading ? (
@@ -709,7 +734,7 @@ export default function ReadingPracticePage() {
                         {feedback && (
                           <div className="space-y-4">
                             <h3 className="font-extrabold text-[#1F2937] dark:text-white text-base">Pronunciation Report</h3>
-                            
+
                             {/* Score Cards */}
                             <div className="grid grid-cols-2 gap-4">
                               <div className="bg-green-50/50 dark:bg-green-950/20 border border-green-200/50 dark:border-green-950/40 rounded-xl p-4 text-center">
@@ -779,10 +804,10 @@ export default function ReadingPracticePage() {
                 ───────────────────────────────────────────────────────────────────────────── */}
             {mode === 'journalist' && (
               <div className="grid grid-cols-1 gap-6">
-                
+
                 {/* News Anchor Viewfinder and Teleprompter container */}
                 <div className="bg-[#0C1020] rounded-3xl border border-blue-900/60 p-6 shadow-2xl space-y-6 relative overflow-hidden text-white">
-                  
+
                   {/* Studio glow background accents */}
                   <div className="absolute top-0 left-0 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl -z-10 pointer-events-none" />
                   <div className="absolute bottom-0 right-0 w-64 h-64 bg-red-500/10 rounded-full blur-3xl -z-10 pointer-events-none" />
@@ -813,7 +838,7 @@ export default function ReadingPracticePage() {
 
                   {/* Viewfinder section / Video mock with scrolling script */}
                   <div className="relative border border-blue-950 bg-slate-950/80 rounded-2xl p-6 overflow-hidden min-h-[360px] flex flex-col justify-between">
-                    
+
                     {/* Viewfinder scanner line overlay */}
                     <div className="absolute inset-0 bg-gradient-to-b from-transparent via-blue-500/5 to-transparent pointer-events-none animate-pulse" />
 
@@ -832,9 +857,9 @@ export default function ReadingPracticePage() {
                         </div>
 
                         {/* Scrolling Script container */}
-                        <div 
+                        <div
                           ref={teleprompterRef}
-                          className="flex-1 overflow-y-auto max-h-[200px] border-y border-slate-900/60 py-4 px-2 scroll-smooth text-center select-none"
+                          className="w-full h-[200px] min-h-[200px] max-h-[200px] overflow-y-auto border-y border-slate-900/60 py-4 px-2 text-center select-none"
                           style={{ scrollbarWidth: 'none' }}
                         >
                           <div className="py-12 space-y-6">
@@ -867,7 +892,7 @@ export default function ReadingPracticePage() {
                                 <Play className="w-3.5 h-3.5" /> Start Scroll
                               </Button>
                             )}
-                            
+
                             <Button
                               size="sm"
                               variant="outline"
@@ -887,11 +912,10 @@ export default function ReadingPracticePage() {
                               <button
                                 key={speed}
                                 onClick={() => setScrollSpeed(speed)}
-                                className={`px-2.5 py-1 rounded text-xs font-bold font-mono transition border ${
-                                  scrollSpeed === speed
+                                className={`px-2.5 py-1 rounded text-xs font-bold font-mono transition border ${scrollSpeed === speed
                                     ? 'bg-red-600 border-red-600 text-white'
                                     : 'bg-transparent border-slate-800 text-slate-400 hover:bg-slate-800'
-                                }`}
+                                  }`}
                               >
                                 {speed === 1 ? '1x' : speed === 2 ? '2x' : '3x'}
                               </button>
@@ -941,11 +965,11 @@ export default function ReadingPracticePage() {
 
                       <div className="flex flex-wrap items-center gap-3">
                         {recorder.state === 'idle' && (
-                          <Button 
+                          <Button
                             onClick={() => {
                               recorder.startRecording()
                               setIsScrolling(true) // Auto start scrolling when recording
-                            }} 
+                            }}
                             className="bg-red-600 hover:bg-red-700 text-white font-extrabold shadow-lg shadow-red-900/20 px-6 gap-2 border border-red-500/30"
                           >
                             <Mic className="w-4 h-4 animate-pulse text-white" /> Start Broadcast
@@ -957,12 +981,12 @@ export default function ReadingPracticePage() {
                           </Button>
                         )}
                         {recorder.state === 'recording' && (
-                          <Button 
+                          <Button
                             onClick={() => {
                               recorder.stopRecording()
                               setIsScrolling(false) // Stop scrolling on stop recording
-                            }} 
-                            variant="destructive" 
+                            }}
+                            variant="destructive"
                             className="gap-2 font-extrabold shadow-lg shadow-red-900/30 px-6"
                           >
                             <Square className="w-4 h-4" /> Cut Broadcast
@@ -1034,26 +1058,74 @@ export default function ReadingPracticePage() {
                     </div>
                   )}
 
-                  {/* Interactive breaking news ticker at bottom */}
-                  <div className="bg-[#101530] border-t border-blue-900/50 -mx-6 -mb-6 px-6 py-3 overflow-hidden flex items-center justify-between text-xs font-mono font-bold tracking-wide relative h-10">
-                    <span className="bg-red-600 text-white px-2.5 py-1 rounded text-[10px] tracking-widest uppercase mr-3 shrink-0 z-10 border border-red-500/20">
-                      BREAKING
-                    </span>
-                    
-                    {/* Sliding Marquee element */}
-                    <div className="flex-1 overflow-hidden relative w-full h-full flex items-center">
-                      <div className="absolute animate-ticker whitespace-nowrap text-blue-200">
-                        {NEWS_TICKERS[tickerIndex]}
+                  {/* Smooth continuous breaking news ticker at bottom */}
+                  <div className="bg-[#101530] border-t border-blue-900/50 -mx-6 -mb-6 overflow-hidden flex items-center relative h-16">
+                    <div className="bg-red-600 text-white px-5 h-full flex items-center justify-center shrink-0 z-20 border-r border-red-500/30">
+                      <span className="text-sm tracking-widest uppercase font-extrabold">
+                        BREAKING
+                      </span>
+                    </div>
+
+                    <div className="flex-1 overflow-hidden relative h-full flex items-center">
+                      <div className="ticker-track">
+                        <div className="ticker-content">
+                          {NEWS_TICKERS.map((news, index) => (
+                            <span key={`first-${index}`} className="ticker-item">
+                              {news}
+                            </span>
+                          ))}
+                        </div>
+
+                        <div className="ticker-content" aria-hidden="true">
+                          {NEWS_TICKERS.map((news, index) => (
+                            <span key={`second-${index}`} className="ticker-item">
+                              {news}
+                            </span>
+                          ))}
+                        </div>
                       </div>
                     </div>
 
                     <style>{`
-                      @keyframes marquee {
-                        0% { transform: translateX(100%); }
-                        100% { transform: translateX(-100%); }
+                      .ticker-track {
+                        display: flex;
+                        width: max-content;
+                        animation: ticker-scroll 70s linear infinite;
+                        will-change: transform;
                       }
-                      .animate-ticker {
-                        animation: marquee 24s linear infinite;
+
+                      .ticker-content {
+                        display: flex;
+                        align-items: center;
+                        flex-shrink: 0;
+                      }
+
+                      .ticker-item {
+                        display: inline-flex;
+                        align-items: center;
+                        white-space: nowrap;
+                        padding: 0 45px;
+                        font-size: 16px;
+                        font-weight: 700;
+                        letter-spacing: 0.04em;
+                        color: #bfdbfe;
+                      }
+
+                      .ticker-item::after {
+                        content: " • ";
+                        margin-left: 45px;
+                        color: #ef4444;
+                        font-weight: 900;
+                      }
+
+                      @keyframes ticker-scroll {
+                        from {
+                          transform: translateX(0);
+                        }
+
+                        to {
+                          transform: translateX(-50%);
+                        }
                       }
                     `}</style>
                   </div>
@@ -1157,7 +1229,7 @@ export default function ReadingPracticePage() {
                 )}
               </div>
             )}
-            
+
           </div>
         </main>
       </div>

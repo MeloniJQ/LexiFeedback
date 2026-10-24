@@ -6,9 +6,10 @@ import Link from 'next/link'
 
 export function Header() {
   return (
-    <header className="sticky top-0 z-50 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1F2937]">
+    <header className="sticky top-0 z-50 border-b border-purple-200/60 dark:border-purple-500/30 bg-white/80 dark:bg-[#111827]/80 backdrop-blur">
+      <div className="h-1 bg-linear-to-r from-[#2C5AA0] via-purple-500 to-teal-400" />
       <div className="px-6 lg:px-8 py-4 flex items-center justify-between">
-        <Link href="/dashboard" className="text-lg font-semibold text-[#1F2937] dark:text-white">
+        <Link href="/dashboard" className="text-lg font-bold bg-linear-to-r from-[#2C5AA0] via-purple-500 to-teal-500 bg-clip-text text-transparent">
           Lexical
         </Link>
 

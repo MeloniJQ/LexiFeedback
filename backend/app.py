@@ -132,6 +132,14 @@ with app.app_context():
             if "duration_seconds" not in existing_session_columns:
                 db.session.execute(text("ALTER TABLE practice_sessions ADD COLUMN duration_seconds FLOAT"))
                 db.session.commit()
+
+            # PERFORMANCE: every page filters practice_sessions by user_id, and
+            # SQLite does not index foreign keys on its own, so without this
+            # each request scans the whole table. Safe to run on every start.
+            db.session.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_practice_sessions_user_id ON practice_sessions (user_id)"
+            ))
+            db.session.commit()
     except Exception as migration_error:
         print(f"[startup migration] Warning: could not auto-migrate users table: {migration_error}")
 

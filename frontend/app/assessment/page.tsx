@@ -415,7 +415,7 @@ export default function AssessmentPage() {
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-white dark:bg-[#0F172A] flex items-start justify-center p-4 py-10">
+    <div className="min-h-screen app-bg flex items-start justify-center p-4 py-10">
       <div className="w-full max-w-2xl">
         <div className="mb-8 text-center">
           <h1 className="text-3xl font-bold text-[#2C5AA0] mb-2">English Level Assessment</h1>

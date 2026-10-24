@@ -29,6 +29,7 @@ from google.genai import types
 from dotenv import load_dotenv
 
 from llm.provider_factory import get_provider
+from utils.cefr import cefr_language_clause, normalize_level, CEFR_LEVELS
 
 load_dotenv()
 
@@ -484,6 +485,7 @@ def generate_conversation_feedback(
     topic_title: str,
     topic_prompt: str,
     duration_seconds: float,
+    english_level: str | None = None,
 ) -> dict:
     """
     Produces a full, structured speaking-evaluation report covering all 10
@@ -500,6 +502,15 @@ def generate_conversation_feedback(
     minutes = int(duration_seconds // 60)
     seconds = int(duration_seconds % 60)
     duration_display = f"{minutes:02d}:{seconds:02d}"
+
+    # The sample improved response is an aspirational stretch target, so it's
+    # written one CEFR tier above the user's current level (defaulting to B2
+    # — the prior hardcoded value — when no level is known yet).
+    if english_level:
+        current_idx = CEFR_LEVELS.index(normalize_level(english_level))
+        sample_response_level = CEFR_LEVELS[min(current_idx + 1, len(CEFR_LEVELS) - 1)]
+    else:
+        sample_response_level = "B2"
 
     system = (
         "You are a senior IELTS/TOEFL speaking examiner and English vocabulary coach. "
@@ -525,8 +536,12 @@ vocabulary actually used, repeated/overused words (with counts), weak-word-to-st
 suggestions, and 10-15 advanced topic-related words the learner should learn next (with short
 meanings). Grammar analysis must quote the learner's own incorrect sentences (or clearly-implied
 ones) and give corrected versions with a short reason. The sample improved response must cover the
-SAME topic in 180-250 words at a B2 level, natural and native-sounding.
+SAME topic in 180-250 words at a {sample_response_level} level (a realistic next-step target for
+this learner, one notch above their current assessed level), natural and native-sounding.
 
+{cefr_language_clause(english_level, subject="feedback comment") or ""}
+(This only affects how the SUMMARY/strengths/improvement-tips TEXT is worded — scores must stay
+equally rigorous, and the sample response above should stay at {sample_response_level} regardless.)
 For pronunciation, infer 3-8 words from the transcript that are commonly mispronounced by English
 learners, or that the transcript's phrasing suggests may have been mispronounced (e.g. unusual
 spelling substitutions a speech-to-text engine makes when it mishears a sound). For EACH word,

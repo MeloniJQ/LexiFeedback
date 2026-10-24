@@ -720,6 +720,7 @@ export default function PresentationPracticePage() {
           slideNumber: currentSlide + 1,
           currentSlide: currentSlideData,
           durationSec: transcribeData.durationSec ?? rec.durationSec,
+          englishLevel: getUser()?.english_level ?? null,
         }),
       })
       const feedbackData = await feedbackRes.json()
@@ -858,7 +859,7 @@ export default function PresentationPracticePage() {
   }
 
   return (
-    <div className="flex h-screen bg-white dark:bg-gray-900">
+    <div className="flex h-screen app-bg">
       <Sidebar />
       <div className="flex-1 flex flex-col">
         <Header />

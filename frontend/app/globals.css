@@ -6,8 +6,8 @@
 /* Light Mode - Lexical Design System */
 :root {
   /* Primary Brand Color */
-  --primary: #000000;
-  --primary-dark: #000000;
+  --primary: #2C5AA0;
+  --primary-dark: #1E3F73;
   
   /* Semantic Colors */
   --success: #10B981;
@@ -50,20 +50,20 @@
   --secondary-foreground: #FFFFFF;
   --muted: #F9FAFB;
   --muted-foreground: #6B7280;
-  --accent: #F3F4F6;
+  --accent: #EDE9FE;
   --accent-foreground: #1F2937;
   --destructive: #DC2626;
   --destructive-foreground: #FFFFFF;
   --border: #E5E7EB;
   --input: #E5E7EB;
-  --ring: #000000;
+  --ring: #8B5CF6;
 }
 
 /* Dark Mode - Lexical Design System */
 .dark {
   /* Primary Brand Color */
-  --primary: #000000;
-  --primary-dark: #000000;
+  --primary: #6366F1;
+  --primary-dark: #4F46E5;
   
   /* Semantic Colors */
   --success: #10B981;
@@ -100,13 +100,13 @@
   --secondary-foreground: #F9FAFB;
   --muted: #1F2937;
   --muted-foreground: #B3BAC5;
-  --accent: #374151;
+  --accent: #3B2F6B;
   --accent-foreground: #F9FAFB;
   --destructive: #DC2626;
   --destructive-foreground: #FFFFFF;
   --border: #4B5563;
   --input: #4B5563;
-  --ring: #FFFFFF;
+  --ring: #A78BFA;
 }
 
 
@@ -147,5 +147,58 @@
   
   p {
     @apply font-sans font-normal leading-relaxed;
+  }
+}
+
+/* ===========================================================================
+   Colour theme — gives every page a colourful gradient backdrop, tinted cards
+   and gradient primary buttons. Lives in @layer components so any explicit
+   Tailwind utility on an element still wins over these defaults.
+   =========================================================================== */
+@layer components {
+  /* Page backdrop (replaces the plain white / black page backgrounds) */
+  .app-bg {
+    background-image: linear-gradient(135deg, #eff6ff 0%, #f5f3ff 45%, #ecfeff 100%);
+  }
+  .dark .app-bg {
+    background-image: linear-gradient(135deg, #0b1226 0%, #1a1238 50%, #062a2a 100%);
+  }
+
+  /* Cards: soft multicolour tint, coloured edge, lift on hover */
+  [class*="dark:bg-[#1F2937]"][class*="rounded"] {
+    background-image: linear-gradient(135deg, rgba(44, 90, 160, 0.07), rgba(139, 92, 246, 0.07) 55%, rgba(20, 184, 166, 0.07));
+    border-color: rgba(139, 92, 246, 0.28);
+    box-shadow: 0 1px 3px rgba(76, 29, 149, 0.08);
+    transition: box-shadow 0.2s ease, transform 0.2s ease;
+  }
+  [class*="dark:bg-[#1F2937]"][class*="rounded"]:hover {
+    box-shadow: 0 8px 22px rgba(76, 29, 149, 0.16);
+  }
+
+  /* Primary blue buttons -> blue-to-violet gradient */
+  button[class*="bg-[#2C5AA0]"]:not([class*="bg-[#2C5AA0]/"]),
+  a[class*="bg-[#2C5AA0]"]:not([class*="bg-[#2C5AA0]/"]) {
+    background-image: linear-gradient(90deg, #2C5AA0, #7C3AED);
+    border-color: transparent;
+    box-shadow: 0 4px 12px rgba(124, 58, 237, 0.25);
+  }
+  button[class*="bg-[#2C5AA0]"]:not([class*="bg-[#2C5AA0]/"]):hover,
+  a[class*="bg-[#2C5AA0]"]:not([class*="bg-[#2C5AA0]/"]):hover {
+    filter: brightness(1.08);
+  }
+  button[class*="bg-[#2C5AA0]"]:disabled {
+    filter: grayscale(0.4);
+    box-shadow: none;
+  }
+
+  /* Colourful text selection + focus rings */
+  ::selection {
+    background: rgba(139, 92, 246, 0.35);
+  }
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible {
+    outline: 2px solid #8B5CF6;
+    outline-offset: 1px;
   }
 }

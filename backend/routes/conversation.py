@@ -8,13 +8,13 @@ LexiFeed Conversation Routes — Casual Conversation Practice
 
 from flask import Blueprint, request, jsonify
 from utils.jwt_handler import token_required
+from models import User
 from services.conversation_service import (
     get_all_topics,
     get_topic_by_id,
     generate_conversation_feedback,
 )
 from services.session_logger import log_practice_session
-
 conversation_bp = Blueprint("conversation", __name__)
 
 
@@ -85,11 +85,13 @@ def feedback(payload):
             topic_title = (data.get("topic_title") or "General Conversation").strip()
             topic_prompt = (data.get("topic_prompt") or "").strip()
 
+        user = User.query.get(payload["user_id"])
         result = generate_conversation_feedback(
             transcript=transcript,
             topic_title=topic_title,
             topic_prompt=topic_prompt,
             duration_seconds=duration_seconds,
+            english_level=user.english_level if user else None,
         )
 
         # Record this attempt (Progress/Analysis dashboard) + auto-track any

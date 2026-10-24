@@ -160,7 +160,7 @@ export default function DashboardPage() {
           <div className="bg-linear-to-br from-blue-50 to-blue-100 dark:from-blue-900/20 dark:to-blue-800/10 rounded-lg p-6 border border-blue-200 dark:border-blue-800 hover:shadow-lg transition-shadow cursor-pointer">
             <div className="flex items-center gap-3 mb-2">
               <TrendingUp className="w-6 h-6 text-blue-600" />
-              <h3 className="font-semibold text-lg text-[#1F2937] dark:text-white">📊 Analytics</h3>
+              <h3 className="font-semibold text-lg text-[#1F2937] dark:text-white">📊 Analytics &amp; Feedback</h3>
             </div>
             <p className="text-[#6B7280] dark:text-gray-400">Track score trends, skills growth, and interview momentum.</p>
           </div>
