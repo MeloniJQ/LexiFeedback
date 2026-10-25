@@ -144,4 +144,18 @@ with app.app_context():
         print(f"[startup migration] Warning: could not auto-migrate users table: {migration_error}")
 
 if __name__ == "__main__":
+    # PERFORMANCE: load the Whisper speech model in the background at startup,
+    # so the first voice recording doesn't wait for the model to load.
+    import threading
+
+    def _warm_whisper():
+        try:
+            from services.voice_service import _get_whisper_model
+            _get_whisper_model()
+        except Exception as e:
+            print(f"[startup] Whisper warm-up skipped: {e}")
+
+    if os.getenv("WARM_WHISPER", "1") == "1":
+        threading.Thread(target=_warm_whisper, daemon=True).start()
+
     app.run(debug=True, use_reloader=False, port=5000, host="0.0.0.0", threaded=True)
