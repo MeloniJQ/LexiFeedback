@@ -1,5 +1,6 @@
 from .user import db
 from datetime import datetime
+from utils.time import to_iso_utc
 
 class PracticeSession(db.Model):
     __tablename__ = 'practice_sessions'
@@ -11,6 +12,7 @@ class PracticeSession(db.Model):
     transcript = db.Column(db.Text, nullable=True)
     feedback = db.Column(db.Text, nullable=True)
     score = db.Column(db.String(10), nullable=True)
+    duration_seconds = db.Column(db.Float, nullable=True)  # actual time the user spent on this attempt
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     # Relationship to user
@@ -25,5 +27,6 @@ class PracticeSession(db.Model):
             'transcript': self.transcript,
             'feedback': self.feedback,
             'score': self.score,
-            'created_at': self.created_at.isoformat() if self.created_at else None
+            'duration_seconds': self.duration_seconds,
+            'created_at': to_iso_utc(self.created_at)
         }

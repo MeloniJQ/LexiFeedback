@@ -30,6 +30,12 @@ voice_bp = Blueprint("voice", __name__)
 
 UPLOAD_DIR   = "uploads/audio"
 MAX_FILE_MB  = 25   # Whisper limit is 25 MB
+MIN_FILE_BYTES = 2000   # ~2KB — below this, it's almost certainly an empty/near-silent
+                         # or corrupted recording rather than real speech (e.g. mic
+                         # permission denied, recording stopped instantly, browser
+                         # produced a near-empty blob). Catching this here gives a
+                         # clear, specific error instead of a confusing empty
+                         # transcript with no explanation.
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -71,6 +77,13 @@ def transcribe(payload):
 
         if file_size_mb > MAX_FILE_MB:
             return jsonify({"error": f"File too large ({file_size_mb:.1f} MB). Max {MAX_FILE_MB} MB."}), 413
+
+        file_size_bytes = file_size_mb * 1024 * 1024
+        if file_size_bytes < MIN_FILE_BYTES:
+            return jsonify({
+                "error": "Recording appears to be empty or too short. Check your microphone "
+                         "permissions and try recording again."
+            }), 400
 
         # Save to temp file with correct extension (Whisper uses it to detect format)
         suffix = Path(audio_file.filename).suffix or ".webm"
@@ -129,7 +142,7 @@ def analyze(payload):
         question         = (data.get("question")         or "").strip()
         question_type    = (data.get("question_type")    or "behavioral").strip()
         company          = (data.get("company")          or "the company").strip()
-        role             = (data.get("role")             or "this role").strip()
+        role             = (data.get("role")              or "this role").strip()
         duration_seconds = float(data.get("duration_seconds", 0))
         word_count       = int(data.get("word_count", len(transcript.split())))
 
@@ -273,7 +286,11 @@ def voice_followup(payload):
       "question":   "Original question",
       "analysis":   { ...full analysis object from /analyze... },
       "company":    "Google",
-      "role":       "Software Engineer"
+      "role":       "Software Engineer",
+      "previous_followups": [                 (optional — for chaining multiple follow-up rounds)
+        { "followup": "...", "answer": "..." },
+        ...
+      ]
     }
 
     Response:
@@ -290,16 +307,18 @@ def voice_followup(payload):
         analysis   = data.get("analysis",    {})
         company    = (data.get("company")    or "the company").strip()
         role       = (data.get("role")       or "this role").strip()
+        previous_followups = data.get("previous_followups") or []
 
         if not transcript:
             return jsonify({"error": "transcript is required"}), 400
 
         result = generate_voice_followup(
-            transcript = transcript,
-            question   = question,
-            analysis   = analysis,
-            company    = company,
-            role       = role,
+            transcript          = transcript,
+            question            = question,
+            analysis            = analysis,
+            company             = company,
+            role                = role,
+            previous_followups  = previous_followups,
         )
 
         return jsonify(result), 200

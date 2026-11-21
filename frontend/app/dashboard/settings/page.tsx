@@ -15,6 +15,7 @@ export default function SettingsPage() {
     education: '',
     language: 'English (US)',
     difficulty: 'Intermediate',
+    englishLevel: '',
     notifications: true,
     emailUpdates: false,
   })
@@ -34,6 +35,7 @@ export default function SettingsPage() {
       email: storedUser.email || '',
       age: storedUser.age ? String(storedUser.age) : '',
       education: storedUser.education || '',
+      englishLevel: storedUser.english_level || '',
     }))
   }, [router])
 
@@ -157,6 +159,21 @@ export default function SettingsPage() {
                   </select>
                 </div>
               </div>
+            </div>
+
+            {/* CEFR Assessment (Feature 1) */}
+            <div className="bg-white dark:bg-[#1F2937] border border-gray-200 dark:border-gray-700 rounded-lg p-6 mb-8">
+              <h2 className="text-lg font-semibold text-[#1F2937] dark:text-white mb-2">
+                English Level Assessment
+              </h2>
+              <p className="text-sm text-[#6B7280] dark:text-gray-400 mb-4">
+                {settings.englishLevel
+                  ? `Your current level: ${settings.englishLevel}. Retake the assessment any time your English has improved — every practice mode adjusts automatically.`
+                  : 'Take the CEFR placement test to unlock level-appropriate practice content.'}
+              </p>
+              <Button variant="outline" onClick={() => router.push('/assessment')}>
+                {settings.englishLevel ? 'Retake Assessment' : 'Take Assessment'}
+              </Button>
             </div>
 
             {/* Notifications */}

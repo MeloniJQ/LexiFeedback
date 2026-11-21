@@ -1,6 +1,6 @@
 @import 'tailwindcss';
+@config '../tailwind.config.ts';
 @import 'tw-animate-css';
-
 @custom-variant dark (&:is(.dark *));
 
 /* Light Mode - Lexical Design System */
@@ -32,9 +32,31 @@
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
   --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-  
-  /* Radius */
+ /* Radius */
   --radius: 0.5rem;
+
+  /* ── Semantic tokens for popovers, dropdowns, tooltips, dialogs, and
+     other floating UI (components/ui/*.tsx use bg-popover,
+     text-popover-foreground, etc. — these were previously undefined,
+     which is why that text rendered with no explicit color at all). All
+     pairings below are verified WCAG AA (≥4.5:1 contrast). */
+  --background: #FFFFFF;
+  --foreground: #1F2937;
+  --card: #FFFFFF;
+  --card-foreground: #1F2937;
+  --popover: #FFFFFF;
+  --popover-foreground: #1F2937;
+  --primary-foreground: #FFFFFF;
+  --secondary-foreground: #FFFFFF;
+  --muted: #F9FAFB;
+  --muted-foreground: #6B7280;
+  --accent: #F3F4F6;
+  --accent-foreground: #1F2937;
+  --destructive: #DC2626;
+  --destructive-foreground: #FFFFFF;
+  --border: #E5E7EB;
+  --input: #E5E7EB;
+  --ring: #000000;
 }
 
 /* Dark Mode - Lexical Design System */
@@ -65,8 +87,28 @@
   /* Shadows */
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.25);
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
-  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.4);
+ --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.4);
+
+  /* ── Same semantic tokens, dark-mode values — also verified WCAG AA. */
+  --background: #000000;
+  --foreground: #F9FAFB;
+  --card: #1F2937;
+  --card-foreground: #F9FAFB;
+  --popover: #1F2937;
+  --popover-foreground: #F9FAFB;
+  --primary-foreground: #FFFFFF;
+  --secondary-foreground: #F9FAFB;
+  --muted: #1F2937;
+  --muted-foreground: #B3BAC5;
+  --accent: #374151;
+  --accent-foreground: #F9FAFB;
+  --destructive: #DC2626;
+  --destructive-foreground: #FFFFFF;
+  --border: #4B5563;
+  --input: #4B5563;
+  --ring: #FFFFFF;
 }
+
 
 @layer base {
   html {

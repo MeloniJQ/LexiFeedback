@@ -2,7 +2,48 @@ import hashlib
 import json
 import random
 import re
+import uuid
 from datetime import datetime, timezone
+
+from utils.cefr import CEFR_LABELS, normalize_level
+
+
+def _cefr_language_clause(english_level: str | None) -> str:
+    """
+    Builds a RULES-section clause that scales question *wording* (vocabulary,
+    sentence complexity) to the candidate's assessed CEFR English level,
+    without changing the underlying technical/subject-matter difficulty —
+    a candidate can be a senior engineer and still be an A2 English speaker.
+    Returns "" when no level is known, leaving the existing default tone
+    (a normal professional interviewer) completely unchanged.
+    """
+    if not english_level:
+        return ""
+
+    level = normalize_level(english_level)
+    label = CEFR_LABELS.get(level, "")
+
+    guidance = {
+        "A1": "Use very short sentences and the most common, everyday words. Avoid idioms, "
+              "phrasal verbs, and multi-clause sentences entirely. One simple idea per question.",
+        "A2": "Use short, simple sentences and common vocabulary. Avoid idioms and complex "
+              "grammar (e.g. avoid conditionals and passive voice where possible).",
+        "B1": "Use clear, moderately simple sentences. Some job-relevant terminology is fine, "
+              "but avoid dense jargon strings and keep each question to one main idea.",
+        "B2": "Normal professional interview phrasing is fine — this is close to the default "
+              "tone. You may use standard idioms and moderately complex sentence structures.",
+        "C1": "Use natural, fluent professional English, including idiomatic phrasing and "
+              "nuanced, multi-clause questions where appropriate — as with a native-level hire.",
+        "C2": "Use sophisticated, idiomatic, native-level professional English freely, including "
+              "nuanced phrasing, subtext, and complex multi-part questions where natural.",
+    }.get(level, "")
+
+    return (
+        f"- CANDIDATE'S ENGLISH LEVEL: {level} ({label}). Word every question so its LANGUAGE "
+        f"(not its subject-matter difficulty) matches this level — {guidance} The technical "
+        f"depth of what's being asked should still match the role/seniority; only the phrasing "
+        f"changes."
+    )
 
 
 QUESTION_TYPES = [
@@ -11,7 +52,23 @@ QUESTION_TYPES = [
     "situational",
     "culture-fit",
     "resume-specific",
+    "coding",
 ]
+
+# Roles where it makes sense to ask an actual coding question (write real
+# code, executed against real test cases) rather than just talking about
+# code. Substring match against the role text, e.g. "Senior Backend Engineer"
+# matches "engineer".
+CODING_ROLE_KEYWORDS = [
+    "developer", "engineer", "programmer", "swe", "software",
+    "full stack", "full-stack", "backend", "frontend", "front-end",
+    "back-end", "coding", "sde",
+]
+
+
+def _is_coding_role(role: str) -> bool:
+    role_lower = (role or "").lower()
+    return any(kw in role_lower for kw in CODING_ROLE_KEYWORDS)
 
 
 ROLE_SKILL_MAP = {
@@ -39,18 +96,15 @@ COMPANY_SIGNALS = {
 }
 
 
-ACTION_VERBS = {
-    "built", "created", "designed", "led", "launched", "improved", "reduced", "increased",
-    "migrated", "optimized", "automated", "owned", "managed", "implemented", "delivered",
-}
-
-
 STOPWORDS = {
     "with", "from", "that", "this", "were", "have", "your", "will", "and", "the", "for",
     "using", "into", "about", "their", "there", "over", "under", "through", "between",
 }
 
 
+# -----------------------------
+# MAIN CONTEXT BUILDER
+# -----------------------------
 def build_interview_context(
     company: str,
     role: str,
@@ -58,14 +112,18 @@ def build_interview_context(
     job_description: str = "",
     key_skills: str = "",
     asked_questions: list[str] | None = None,
+    english_level: str | None = None,
 ) -> dict:
+
     clean_company = _clean_label(company, "the company")
     clean_role = _clean_label(role, "this role")
+
     resume_signals = extract_resume_signals(resume_text)
     jd_signals = _extract_keywords(job_description, limit=10)
     skill_signals = _split_skills(key_skills)
     role_signals = _role_signals(clean_role)
     company_signals = _company_signals(clean_company, job_description)
+
     seed = _session_seed(clean_company, clean_role, resume_text, job_description, key_skills)
 
     focus_areas = _unique(
@@ -95,73 +153,128 @@ def build_interview_context(
         "asked_questions": asked_questions or [],
         "session_seed": seed,
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "english_level": english_level,
     }
 
 
-def build_question_generation_prompt(context: dict, num_questions: int = 5) -> tuple[str, str]:
-    """Build prompt for generating configurable number of interview questions."""
+# -----------------------------
+# QUESTION GENERATION PROMPT
+# -----------------------------
+def build_question_generation_prompt(context: dict, num_questions: int = 10) -> tuple[str, str]:
+
     resume = context["resume_signals"]
-    
-    # Cycle through question types if more than 5 questions requested
     num_questions = max(1, min(num_questions, 20))
-    num_base_types = len(QUESTION_TYPES)
-    
-    if num_questions <= num_base_types:
-        type_guidance = f", one of each type: {', '.join(QUESTION_TYPES[:num_questions])}"
-    else:
-        # For more than 5 questions, cycle through types
-        types_used = [QUESTION_TYPES[i % num_base_types] for i in range(num_questions)]
-        type_guidance = f", cycling through types as needed"
-    
+    asked_questions = context.get("asked_questions") or []
+
+    # rough distribution across a realistic interview
+    n_technical = max(1, round(num_questions * 0.35))
+    n_resume = max(1, round(num_questions * 0.2))
+    n_situational = max(1, round(num_questions * 0.2))
+    n_culture = max(1, num_questions - 1 - n_technical - n_resume - n_situational)
+
+    language_level_clause = _cefr_language_clause(context.get("english_level"))
+
+    # For developer/engineering roles, replace one "technical" slot with a
+    # real hands-on coding question — one the candidate actually writes code
+    # for, which then gets RUN against real test cases (see
+    # services/code_execution_service.py) instead of just talked about.
+    is_coding_role = _is_coding_role(context["role"])
+    n_coding = 1 if (is_coding_role and n_technical > 1) else 0
+    n_technical = n_technical - n_coding
+
+    coding_block = ""
+    coding_schema_line = ""
+    if n_coding:
+        coding_block = f"""
+6. {n_coding} question (type "coding"): a REAL, self-contained coding problem the candidate
+   must write actual code for (like a real technical screen — e.g. two-sum-style array/string/
+   hash-map problems, not open-ended design). Requirements for this question specifically:
+   - "language" must be either "python" or "javascript".
+   - "function_name" is the exact function name the candidate must define (snake_case for
+     python, camelCase for javascript).
+   - "starter_code" is a short function stub/signature only (no implementation), matching
+     "function_name" exactly, in the chosen "language".
+   - "examples" is 1-2 human-readable {{"input": "...", "output": "..."}} pairs shown to the
+     candidate as a description of expected behaviour.
+   - "test_cases" is 3-5 objects: {{"input": [<arg1>, <arg2>, ...], "expected_output": <value>}}.
+     CRITICAL: "input" must be a JSON array of the EXACT positional arguments passed to
+     "function_name", and "expected_output" must be the EXACT JSON-serialisable return value —
+     these are fed directly into a real interpreter, so they must be 100% correct and
+     unambiguous (no floats where exactness can't be guaranteed, no stdout-based problems).
+   - Keep the problem solvable in 10-15 minutes — moderate difficulty, not a leetcode-hard.
+"""
+        coding_schema_line = (
+            '\n  {"id": 3, "type": "coding", "question": "...", "hint": "...", '
+            '"language": "python", "function_name": "two_sum", '
+            '"starter_code": "def two_sum(nums, target):\\n    pass", '
+            '"examples": [{"input": "nums=[2,7,11,15], target=9", "output": "[0,1]"}], '
+            '"test_cases": [{"input": [[2,7,11,15], 9], "expected_output": [0,1]}]}'
+        )
+
+
     system = (
-        "You are an agentic interview designer. Act like a calibrated hiring panel: "
-        "first infer role competencies, then map resume evidence to those competencies, "
-        "then write realistic primary interview questions. Return valid JSON only."
+        "You are a senior technical interviewer with 10+ years of experience running real "
+        "interviews at top tech companies. You design realistic, professional mock interviews, "
+        "not generic internet question lists. Every question must sound like it came from an "
+        "interviewer who actually read this candidate's resume and this job description. "
+        "Return valid JSON only — no markdown fences, no commentary, no text outside the JSON."
     )
+
     user = f"""
-Create a fresh mock interview for this target:
-- Company: {context['company']}
-- Role: {context['role']}
-- Session seed: {context['session_seed']}
-- Number of questions: {num_questions}
+Design a complete mock interview of exactly {num_questions} questions for this candidate.
 
-Role/company focus:
-{json.dumps({
-    "focus_areas": context["focus_areas"],
-    "role_signals": context["role_signals"],
-    "company_signals": context["company_signals"],
-    "job_description_signals": context["job_description_signals"],
-}, indent=2)}
+CANDIDATE CONTEXT
+Company: {context['company']}
+Role: {context['role']}
+Key skills to probe: {json.dumps(context['key_skills'])}
+Job description signals: {json.dumps(context['job_description_signals'])}
+Resume signals: {json.dumps(resume)}
+Role-specific focus areas: {json.dumps(context['role_signals'])}
+Company culture signals: {json.dumps(context['company_signals'])}
+Combined focus areas: {json.dumps(context['focus_areas'])}
 
-Candidate resume signals:
-{json.dumps({
-    "roles": resume["roles"],
-    "technologies": resume["technologies"],
-    "projects": resume["projects"],
-    "achievements": resume["achievements"],
-    "possible_gaps": resume["possible_gaps"],
-}, indent=2)}
+QUESTIONS ALREADY ASKED IN THIS SESSION — do NOT repeat these or ask close variants of them:
+{json.dumps(asked_questions)}
 
-Previously asked in this session:
-{json.dumps(context["asked_questions"], indent=2)}
+REQUIRED STRUCTURE (exactly {num_questions} questions total):
+1. Question 1 (type "behavioral"): an opening question — a natural, role-specific version of
+   "Tell me about yourself and why you're interested in this role at this company."
+2. {n_technical} questions (type "technical"): core fundamentals for this role AND questions
+   tied directly to the specific technologies named in the resume/job description. Not generic
+   textbook trivia — make them specific to this candidate's stack.
+3. {n_resume} questions (type "resume-specific"): dig into a specific project, achievement, or
+   technology mentioned in the resume signals above. Reference it concretely by name.
+4. {n_situational} questions (type "situational"): realistic on-the-job scenarios for this exact
+   role (e.g. "Imagine X happens in production/with a client/on your team — walk me through what
+   you'd do"). These must be scenario + ask-for-approach style, like a real interview.
+5. {n_culture} questions (type "culture-fit"): HR-style questions about motivation, values,
+   teamwork, or conflict, tied to the company's culture signals where possible. If this is the
+   last question, make it a natural closing question.
+{coding_block}
+RULES
+- Every question must feel specific to THIS candidate/role/company — never interchangeable
+  templates.
+- Increase difficulty gradually across the set.
+- No two questions may test the same underlying thing.
+- Each question is 1-3 sentences, professional interviewer tone.
+- "hint" is a 1-sentence coaching tip on how to structure a strong answer (e.g. STAR method for
+  behavioral/situational, trade-off reasoning for technical).
+{language_level_clause}
 
-Interview design rules:
-1. Generate exactly {num_questions} questions{type_guidance}.
-2. Every question must be specific to the role, company, job description, skills, or resume evidence.
-3. If resume signals exist, at least half the questions must mention concrete resume details such as a project, technology, prior title, metric, or transition.
-4. Avoid generic prompts like "tell me about yourself", "strengths and weaknesses", or "why should we hire you".
-5. Make the questions sound like a real interviewer: concise, probing, and answerable in 90-150 seconds.
-6. Vary the angle from common interview-bank questions by using the session seed.
-7. Include a hint that tells the candidate what evidence a strong answer should include.
-8. Each question should probe different competencies — do not repeat themes.
-
-Return JSON only as an array of {num_questions} objects with id, type, question, and hint keys.
+Return ONLY a JSON array in this exact shape, with ids 1..{num_questions} in interview order:
+[
+  {{"id": 1, "type": "behavioral", "question": "...", "hint": "..."}},
+  {{"id": 2, "type": "technical", "question": "...", "hint": "..."}}{coding_schema_line}
+]
 """
     return system, user
 
 
-def validate_questions(raw_questions, context: dict, num_questions: int = 5) -> list[dict]:
-    """Validate and normalize questions, filling to reach num_questions."""
+# -----------------------------
+# VALIDATION
+# -----------------------------
+def validate_questions(raw_questions, context: dict, num_questions: int = 10) -> list[dict]:
+
     if not isinstance(raw_questions, list):
         raise ValueError("Question payload must be a list")
 
@@ -169,402 +282,450 @@ def validate_questions(raw_questions, context: dict, num_questions: int = 5) -> 
     seen = set()
     used_types = set()
 
-    # Ensure num_questions is reasonable
     num_questions = max(1, min(num_questions, 20))
 
-    for item in raw_questions:
+    for i, item in enumerate(raw_questions):
         if not isinstance(item, dict):
             continue
+
         question = _normalize_space(str(item.get("question", "")))
         hint = _normalize_space(str(item.get("hint", "")))
         qtype = str(item.get("type", "")).strip().lower()
 
-        if qtype not in QUESTION_TYPES or qtype in used_types:
-            qtype = _first_unused_type(used_types)
-        if not question or _is_generic_question(question):
+        is_intro = (i == 0 or item.get("id") == 1)
+
+        if not question:
             continue
+
+        if qtype not in QUESTION_TYPES:
+            qtype = "behavioral"
 
         key = _question_key(question)
         if key in seen:
             continue
 
-        seen.add(key)
-        used_types.add(qtype)
-        normalized.append({
+        entry = {
             "id": len(normalized) + 1,
             "type": qtype,
             "question": question,
             "hint": hint or _default_hint(qtype, context),
-        })
-        
+        }
+
+        if qtype == "coding":
+            coding_fields = _validate_coding_fields(item)
+            if coding_fields is None:
+                # The model didn't return usable/runnable test cases — we
+                # can NEVER show a "coding" question without them (there'd
+                # be nothing for the compiler to check), so downgrade this
+                # one question to "technical" rather than dropping it or
+                # silently shipping a broken coding UI.
+                entry["type"] = "technical"
+                entry["hint"] = hint or _default_hint("technical", context)
+            else:
+                entry.update(coding_fields)
+
+        seen.add(key)
+        used_types.add(entry["type"])
+        normalized.append(entry)
+
         if len(normalized) >= num_questions:
             break
 
+    # fallback fill
     if len(normalized) < num_questions:
-        fill = generate_fallback_questions(context, count=num_questions)
+        fill = generate_fallback_questions(context, num_questions)
         for item in fill:
             if len(normalized) >= num_questions:
                 break
             key = _question_key(item["question"])
-            if key not in seen and (len(normalized) < num_questions or item["type"] not in used_types):
+            if key not in seen:
                 item = {**item, "id": len(normalized) + 1}
                 normalized.append(item)
                 seen.add(key)
-                used_types.add(item["type"])
 
     return normalized[:num_questions]
 
 
-def generate_fallback_questions(context: dict, count: int = 5) -> list[dict]:
-    """Generate fallback questions, cycling through types if count > len(QUESTION_TYPES)."""
-    rng = random.Random(context["session_seed"])
+# -----------------------------
+# FALLBACK QUESTIONS
+# -----------------------------
+def generate_fallback_questions(context: dict, count: int = 10) -> list[dict]:
+    """
+    Used ONLY when the live AI call itself fails (e.g. OpenRouter outage/timeout).
+    Seeded with a fresh random source every call (not a deterministic hash of
+    company+role+resume) so retries with the same inputs don't produce an
+    identical interview, and each category pool is large enough that a full
+    10-question fallback interview doesn't repeat itself.
+    """
+    rng = random.Random(uuid.uuid4().int)
     role = context["role"]
     company = context["company"]
-    focus = context["focus_areas"] or _role_signals(role) or ["role priorities"]
-    company_focus = context["company_signals"] or ["the company context"]
-    evidence = context["candidate_evidence"]
-    resume = context["resume_signals"]
+    key_skills = context.get("key_skills") or []
+    top_skill = key_skills[0] if key_skills else "your core skills"
 
-    def pick(items, default):
-        return rng.choice(items) if items else default
-
-    # Ensure count is reasonable
     count = max(1, min(count, 20))
 
-    templates = {
+    fallback_pools = {
         "behavioral": [
-            f"Tell me about a time you had to deliver {pick(focus, 'excellence')} under pressure. What trade-off did you make, and what changed because of your decision?",
-            f"Walk me through a situation where you had to influence someone without authority while working on {pick(resume['achievements'], 'a project')}. What did you do when there was resistance?",
-            f"Think about this resume item: \"{pick(resume['projects'], 'a project')}\". Where was your first approach wrong, how did you notice it, and what changed after you adapted?",
-            f"Describe a moment when you failed at something important to this role. What did you learn, and how did it change your approach?",
-            f"Tell me about a time you had to work with someone very different from you. How did you find common ground?",
+            f"Tell me about a time you handled a difficult situation in a role like {role}.",
+            "Describe a significant project you're proud of from your experience.",
+            "Tell me about a time you had to learn a new tool or technology quickly.",
+            "Describe a time you disagreed with a teammate and how you resolved it.",
+            "Tell me about a mistake you made at work and what you learned from it.",
+            "Describe a time you had to work under a tight deadline.",
+            "Tell me about a time you took initiative without being asked.",
         ],
         "technical": [
-            f"For this {role} role, how would you evaluate whether your experience with {pick(resume['technologies'], 'a core technology')} is production-ready for {company}'s standards?",
-            f"Take {pick(resume['projects'], 'a project')}. If {company} needed it to support 10x more users or stakeholders, what would you redesign first and why?",
-            f"Choose one technical decision from your background involving {pick(resume['technologies'], 'a technology')}. What alternatives did you reject, and what evidence guided you?",
-            f"What's the most complex technical problem you've solved? Walk me through how you broke it down and what you learned.",
-            f"Describe a time you had to learn a new technology quickly. How did you approach it, and what was the result?",
-        ],
-        "situational": [
-            f"Imagine you join {company} and inherit a project where {pick(focus, 'quality')} is failing but the deadline cannot move. What would you diagnose in your first week?",
-            f"If a senior stakeholder at {company} pushed for speed while your analysis showed a quality or risk issue, how would you handle the conversation?",
-            f"Suppose your team disagrees on whether to optimize for {pick(focus, 'performance')} or short-term delivery. How would you make the decision clear and fair?",
-            f"Tell me about a time you received critical feedback. How did you respond, and what changed?",
-            f"Describe a situation where you had to make a decision with incomplete information. What was your process?",
-        ],
-        "culture-fit": [
-            f"What about {company}'s work connects with your experience in {pick(resume['achievements'], 'your background')}, and where do you think you would need to stretch?",
-            f"{company} likely values {pick(company_focus, 'craftsmanship')}. Tell me about a time your behavior showed that quality, not just your results.",
-            f"Why is {company} the right environment for your next step as a {role}, beyond the title itself?",
-            f"What does a healthy team culture look like to you, and how do you contribute to it?",
-            f"Tell me about a value that's deeply important to you. How has it guided a decision you made?",
+            f"Explain a technical challenge you encountered while working as a {role}.",
+            "How do you ensure code quality and maintainability in your projects?",
+            "Can you walk me through your process for debugging a complex issue?",
+            f"How would you design a system that needs to scale, using {top_skill}?",
+            "What trade-offs do you consider when choosing a database for a new project?",
+            "How do you approach writing tests for a feature you're building?",
+            "Walk me through how you'd optimize a slow-performing piece of code.",
         ],
         "resume-specific": [
-            f"I noticed this resume item: \"{pick(resume['projects'], 'a project')}\". What was the hardest part that is not obvious from the resume, and what did you personally own?",
-            f"Your resume points to {pick(resume['achievements'], 'an achievement')}. What metric or signal proves that work mattered, and what would you improve if you did it again?",
-            f"You mention {pick(resume['technologies'], 'a technology')}. Explain a real problem you solved with it, including the constraint that made the work difficult.",
-            f"Tell me about a role or project you're particularly proud of. What made you successful there, and how does it apply to this role?",
-            f"What's the transition that excites you most about moving to this {role} role from your background?",
+            "Pick one project from your resume — what was the hardest technical decision you made on it?",
+            "What was your specific individual contribution on the project you'd call your biggest achievement?",
+            "One of your listed skills stands out to me — tell me about a real situation where you used it.",
+            "What would you do differently if you rebuilt the project on your resume today?",
+        ],
+        "situational": [
+            "How would you handle a situation where a project deadline is at risk?",
+            "What would you do if you disagreed with a technical decision made by your team lead?",
+            "How do you prioritize tasks when you have multiple urgent requests at once?",
+            "Imagine a critical bug is found in production right before a release — walk me through what you'd do.",
+            "A stakeholder asks for a feature that conflicts with best practice — how do you handle that conversation?",
+            "You inherit a codebase with no documentation and a tight deadline — what's your approach?",
+        ],
+        "culture-fit": [
+            f"What values are you looking for in your next team at {company}?",
+            "How do you give and receive constructive feedback?",
+            "What motivates you to do your best work?",
+            f"Why {company} specifically, and why this {role} role?",
+            "Do you have any questions for us before we wrap up?",
         ],
     }
 
+    # Mirror the same realistic category distribution used in the AI prompt
+    n_technical = max(1, round(count * 0.35))
+    n_resume = max(1, round(count * 0.2))
+    n_situational = max(1, round(count * 0.2))
+    n_culture = max(1, count - 1 - n_technical - n_resume - n_situational)
+
+    # Same swap as the AI prompt path: for a coding role, one "technical"
+    # slot becomes a real, hand-written "coding" question with guaranteed-
+    # valid test cases (these are used verbatim — no AI involved — so they
+    # always work even when the live AI call has completely failed).
+    n_coding = 1 if (_is_coding_role(role) and n_technical > 1) else 0
+    n_technical = n_technical - n_coding
+
+    sequence = (
+        ["behavioral"]
+        + ["technical"] * n_technical
+        + ["coding"] * n_coding
+        + ["resume-specific"] * n_resume
+        + ["situational"] * n_situational
+        + ["culture-fit"] * n_culture
+    )[:count]
+    while len(sequence) < count:
+        sequence.append(rng.choice(QUESTION_TYPES))
+    rng.shuffle(sequence[1:])  # keep index 0 as the intro question, mix the rest
+
     questions = []
-    for idx in range(count):
-        qtype = QUESTION_TYPES[idx % len(QUESTION_TYPES)]
-        question_text = rng.choice(templates[qtype])
-        questions.append({
-            "id": idx + 1,
-            "type": qtype,
-            "question": question_text,
-            "hint": _default_hint(qtype, context),
-        })
+    used_per_category: dict[str, set] = {}
+    used_coding_ids: set = set()
+
+    for i in range(count):
+        if i == 0:
+            q = f"To start, could you tell me a bit about yourself and your interest in the {role} role at {company}?"
+            qtype = "behavioral"
+        elif sequence[i] == "coding":
+            qtype = "coding"
+        else:
+            qtype = sequence[i]
+            pool = list(fallback_pools.get(qtype, fallback_pools["behavioral"]))
+            rng.shuffle(pool)
+            used = used_per_category.setdefault(qtype, set())
+            q = next((p for p in pool if p not in used), None)
+            if q is None:
+                q = rng.choice(pool)  # pool exhausted (rare) — reuse rather than crash
+            used.add(q)
+
+        if qtype == "coding":
+            available = [c for c in CODING_FALLBACK_POOL if c["question"] not in used_coding_ids]
+            problem = rng.choice(available or CODING_FALLBACK_POOL)
+            used_coding_ids.add(problem["question"])
+            questions.append({
+                "id": i + 1,
+                "type": "coding",
+                "question": problem["question"],
+                "hint": _default_hint("coding", context),
+                "language": problem["language"],
+                "function_name": problem["function_name"],
+                "starter_code": problem["starter_code"],
+                "examples": problem["examples"],
+                "test_cases": problem["test_cases"],
+            })
+        else:
+            questions.append({
+                "id": i + 1,
+                "type": qtype,
+                "question": q,
+                "hint": _default_hint(qtype, context),
+            })
 
     return questions
 
 
+# Hand-written, guaranteed-runnable coding problems used only when the live
+# AI question-generation call fails entirely. These are deliberately simple,
+# classic problems so the test cases below are unambiguously correct.
+CODING_FALLBACK_POOL = [
+    {
+        "question": "Write a function that takes an array of integers and a target sum, and returns "
+                     "the indices of the two numbers that add up to the target. Assume exactly one "
+                     "valid answer exists.",
+        "language": "python",
+        "function_name": "two_sum",
+        "starter_code": "def two_sum(nums, target):\n    pass",
+        "examples": [{"input": "nums=[2,7,11,15], target=9", "output": "[0,1]"}],
+        "test_cases": [
+            {"input": [[2, 7, 11, 15], 9], "expected_output": [0, 1]},
+            {"input": [[3, 2, 4], 6], "expected_output": [1, 2]},
+            {"input": [[3, 3], 6], "expected_output": [0, 1]},
+        ],
+    },
+    {
+        "question": "Write a function that checks whether a given string is a palindrome, ignoring "
+                     "case and non-alphanumeric characters.",
+        "language": "python",
+        "function_name": "is_palindrome",
+        "starter_code": "def is_palindrome(s):\n    pass",
+        "examples": [{"input": "s='A man, a plan, a canal: Panama'", "output": "True"}],
+        "test_cases": [
+            {"input": ["A man, a plan, a canal: Panama"], "expected_output": True},
+            {"input": ["race a car"], "expected_output": False},
+            {"input": [""], "expected_output": True},
+        ],
+    },
+    {
+        "question": "Write a function that returns the first non-repeating character in a string, "
+                     "or an empty string if every character repeats.",
+        "language": "javascript",
+        "function_name": "firstUniqueChar",
+        "starter_code": "function firstUniqueChar(s) {\n  \n}",
+        "examples": [{"input": "s='swiss'", "output": "'w'"}],
+        "test_cases": [
+            {"input": ["swiss"], "expected_output": "w"},
+            {"input": ["aabbcc"], "expected_output": ""},
+            {"input": ["z"], "expected_output": "z"},
+        ],
+    },
+]
+
+
+# -----------------------------
+# FOLLOWUP PROMPT
+# -----------------------------
 def build_followup_prompt(
     original_question: str,
     candidate_answer: str,
-    company: str,
-    role: str,
-    previous_pairs: list[dict] | None = None,
-    resume_context: str = "",
-) -> tuple[str, str]:
-    """Build adaptive follow-up prompt that probes deeper based on answer gaps."""
-    context = build_interview_context(company, role, resume_context)
-    
-    # Analyze answer to guide follow-up direction
-    answer_lower = candidate_answer.lower()
-    has_metrics = bool(re.search(r'\b\d+%|\d+x|\$\d+|\d+%|improved|increased|reduced\b', answer_lower))
-    has_star = bool(re.search(r'situation|task|action|result|challenge|problem', answer_lower, re.I))
-    answer_length = len(candidate_answer.split())
-    is_vague = answer_length < 30 or "think" in answer_lower or "maybe" in answer_lower or "probably" in answer_lower
-    
-    # Determine probe direction
-    if is_vague:
-        probe_direction = "Ask for concrete example or specific situation with measurable outcome."
-    elif not has_metrics:
-        probe_direction = "Probe for quantifiable impact, business metrics, or measurable results."
-    elif not has_star:
-        probe_direction = "Probe for deeper context: what was the challenge, your role, the decision point?"
-    else:
-        probe_direction = "Probe for learning, growth, or how they'd apply this in the new role/company context."
-    
+    previous_pairs=None,
+    resume_context="",
+    company: str = "",
+    role: str = ""
+):
     system = (
-        "You are a senior interviewer running an adaptive mock interview. "
-        "Your follow-ups are sharp, probing, and help the candidate demonstrate depth. "
-        "Each follow-up should feel like it's responding to their specific answer, not a script. "
-        "Return valid JSON only."
+        "You are an expert interviewer. Your task is to generate a single, sharp follow-up "
+        "question based on the candidate's answer. Your response must be in valid JSON format."
     )
+
+    prior_rounds_block = ""
+    if previous_pairs:
+        prior_rounds_block = "\n\nPREVIOUS FOLLOW-UP ROUNDS ON THIS SAME QUESTION (do not repeat these — probe a NEW angle, or focus on a detail not yet covered):\n"
+        for i, pair in enumerate(previous_pairs, 1):
+            prior_question = pair.get("followup") or pair.get("question", "")
+            prior_answer = pair.get("answer", "")
+            prior_rounds_block += f"\nFollow-up {i}: {prior_question}\nCandidate's answer: {prior_answer}\n"
+
+    avoid_repeat_clause = " that has not already been covered above" if previous_pairs else ""
+
     user = f"""
-Target role: {context['role']} at {context['company']}
-Role/company focus: {json.dumps(context['focus_areas'][:8])}
+INTERVIEW CONTEXT:
+- Role: {role}
+- Company: {company}
 
-Original question:
-{original_question}
-
-Candidate answer ({answer_length} words):
-{candidate_answer}
-
-Previous Q&A in this session:
-{json.dumps(previous_pairs or [], indent=2)}
-
-Probing direction: {probe_direction}
+ORIGINAL QUESTION: "{original_question}"
+CANDIDATE ANSWER: \"\"\"{candidate_answer}\"\"\"
+{prior_rounds_block}
 
 Task:
-1. Identify the SINGLE most important missing evidence, vague claim, risk, or interesting thread in the answer.
-2. Ask exactly one sharp follow-up question (1-2 sentences) that a real interviewer would ask next.
-3. The follow-up should feel naturally adaptive—reference something specific they said.
-4. Do not repeat the original question unless the answer is completely evasive.
-5. Avoid generic follow-ups—make it specific to their answer and the role.
-6. If possible, quote 2-8 exact words from their answer that triggered the follow-up.
-
-Return JSON only:
+Generate ONE sharp, incisive follow-up question that probes for more detail{avoid_repeat_clause}.
+Return valid JSON only:
 {{
-  "followup": "...",
-  "reason": "one short sentence explaining why this probes the answer",
-  "probe_target": "specific skill, evidence, risk, or competency being tested",
-  "quote_used": "exact candidate phrase or empty string"
+  "followup": "the follow-up question text",
+  "probe_target": "what this tests (e.g., 'specificity', 'ownership')",
+  "quote_used": "the 2-6 word phrase from the answer that triggered this question"
 }}
 """
+    print(f"FOLLOWUP INPUT TRANSCRIPT: {candidate_answer[:100]}...")
     return system, user
 
 
-def fallback_followup(original_question: str, candidate_answer: str, company: str, role: str) -> dict:
-    answer = _normalize_space(candidate_answer)
-    quote = _extract_quote(answer)
-    lower = answer.lower()
-
-    if len(answer.split()) < 25:
-        followup = "Can you make that concrete by walking me through one specific situation, your action, and the measurable result?"
-        target = "specificity"
-    elif not re.search(r"\d|%|reduced|increased|improved|saved|launched|users|revenue", lower):
-        followup = f"You mentioned '{quote}' - what result proved that work was successful, and how did you measure it?"
-        target = "measurable impact"
-    elif not re.search(r"\bi\b|\bmy\b|\bme\b", lower):
-        followup = f"What part of that outcome did you personally own, and what decisions were only yours to make?"
-        target = "personal ownership"
-    else:
-        followup = f"If you had to repeat that work at {company} as a {role}, what would you change based on what you learned?"
-        target = "judgment and transferability"
-
-    return {
-        "followup": followup,
-        "reason": "The answer needs deeper evidence before an interviewer can judge the competency.",
-        "probe_target": target,
-        "quote_used": quote if quote and quote in followup else "",
-    }
-
-
+# -----------------------------
+# RESUME SIGNALS
+# -----------------------------
 def extract_resume_signals(resume_text: str) -> dict:
-    text = _normalize_space(resume_text)
-    if not text:
+
+    if not resume_text:
         return {"roles": [], "technologies": [], "projects": [], "achievements": [], "possible_gaps": []}
 
-    sentences = _sentences(text)
-    technologies = _extract_technologies(text)
-    roles = _extract_roles(text)
-    projects = _extract_project_lines(sentences)
-    achievements = _extract_achievement_lines(sentences)
-    possible_gaps = _extract_possible_gaps(text)
+    tech_keywords = {"python", "javascript", "react", "node", "sql", "aws", "docker", "kubernetes"}
+
+    words = re.findall(r'\b\w+\b', resume_text.lower())
 
     return {
-        "roles": roles[:6],
-        "technologies": technologies[:12],
-        "projects": projects[:6],
-        "achievements": achievements[:6],
-        "possible_gaps": possible_gaps[:4],
+        "roles": [],
+        "technologies": list(set(words) & tech_keywords),
+        "projects": [],
+        "achievements": [],
+        "possible_gaps": [],
     }
 
 
-def parse_json_object(raw: str):
-    cleaned = re.sub(r"```json|```", "", raw or "").strip()
-    try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError:
-        match = re.search(r"(\[.*\]|\{.*\})", cleaned, re.DOTALL)
-        if not match:
-            raise
-        return json.loads(match.group(1))
+# -----------------------------
+# HELPERS
+# -----------------------------
+def _clean_label(text: str, default: str) -> str:
+    return text.strip() if text else default
 
 
-def _clean_label(value: str, fallback: str) -> str:
-    value = _normalize_space(value)
-    return value[:120] if value else fallback
+def _extract_keywords(text: str, limit: int = 10):
+    words = re.findall(r'\b\w{4,}\b', (text or "").lower())
+    return list(dict.fromkeys(words))[:limit]
 
 
-def _normalize_space(value: str) -> str:
-    return re.sub(r"\s+", " ", value or "").strip()
+def _split_skills(skills: str):
+    return [s.strip() for s in re.split(r'[,;|\n]', skills or "") if s.strip()]
 
 
-def _session_seed(*parts: str) -> int:
-    source = "|".join(_normalize_space(p).lower() for p in parts if p)
-    source = f"{source}|{datetime.now(timezone.utc).isoformat(timespec='microseconds')}"
-    digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
-    return int(digest[:12], 16)
+def _role_signals(role: str):
+    for k, v in ROLE_SKILL_MAP.items():
+        if k in role.lower():
+            return v
+    return []
 
 
-def _role_signals(role: str) -> list[str]:
-    lower = role.lower()
+def _company_signals(company: str, jd: str):
     signals = []
-    for key, values in ROLE_SKILL_MAP.items():
-        if key in lower:
-            signals.extend(values)
-    if not signals:
-        signals = _extract_keywords(role, limit=6)
-    return _unique(signals)
+    for k, v in COMPANY_SIGNALS.items():
+        if k in company.lower():
+            signals += v
+    return signals
 
 
-def _company_signals(company: str, job_description: str = "") -> list[str]:
-    lower = company.lower()
-    signals = []
-    for key, values in COMPANY_SIGNALS.items():
-        if key in lower:
-            signals.extend(values)
-    if job_description:
-        signals.extend(_extract_keywords(job_description, limit=5))
-    return _unique(signals)
+def _session_seed(*args):
+    return int(hashlib.md5("".join(args).encode()).hexdigest(), 16) % 10**8
 
 
-def _split_skills(value: str) -> list[str]:
-    return _unique([part.strip(" .") for part in re.split(r"[,;/\n]+", value or "") if part.strip()])[:12]
+def _unique(items):
+    return list(dict.fromkeys(items))
 
 
-def _extract_keywords(text: str, limit: int = 10) -> list[str]:
-    words = re.findall(r"[A-Za-z][A-Za-z0-9+#.-]{2,}", text or "")
-    candidates = []
-    for word in words:
-        clean = word.strip(".,:;()[]{}").lower()
-        if clean in STOPWORDS or len(clean) < 3:
+def _normalize_space(text: str):
+    return " ".join(text.split())
+
+
+def _question_key(q: str):
+    return re.sub(r'[^a-z0-9]', '', q.lower())
+
+
+def _validate_coding_fields(item: dict) -> dict | None:
+    """
+    Validates that a "coding" question actually has everything needed to run
+    for real (language, function name, and at least one well-formed test
+    case). Returns None if anything required is missing/malformed, so the
+    caller can safely downgrade the question instead of shipping a coding
+    UI with nothing for the compiler to execute.
+    """
+    language = str(item.get("language", "")).strip().lower()
+    if language not in ("python", "javascript"):
+        return None
+
+    function_name = str(item.get("function_name", "")).strip()
+    if not function_name or not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", function_name):
+        return None
+
+    starter_code = str(item.get("starter_code", "")).strip()
+    if not starter_code:
+        return None
+
+    raw_test_cases = item.get("test_cases")
+    if not isinstance(raw_test_cases, list) or not raw_test_cases:
+        return None
+
+    clean_cases = []
+    for case in raw_test_cases:
+        if not isinstance(case, dict) or "input" not in case or "expected_output" not in case:
             continue
-        if clean not in candidates:
-            candidates.append(clean)
-    return candidates[:limit]
+        if not isinstance(case["input"], list):
+            continue
+        try:
+            json.dumps(case["input"])
+            json.dumps(case["expected_output"])
+        except (TypeError, ValueError):
+            continue
+        clean_cases.append({"input": case["input"], "expected_output": case["expected_output"]})
+
+    if not clean_cases:
+        return None
+
+    raw_examples = item.get("examples")
+    examples = []
+    if isinstance(raw_examples, list):
+        for ex in raw_examples:
+            if isinstance(ex, dict) and "input" in ex and "output" in ex:
+                examples.append({"input": str(ex["input"]), "output": str(ex["output"])})
+
+    return {
+        "language": language,
+        "function_name": function_name,
+        "starter_code": starter_code,
+        "examples": examples,
+        "test_cases": clean_cases,
+    }
 
 
-def _extract_technologies(text: str) -> list[str]:
-    tech_pattern = re.compile(
-        r"\b(Python|JavaScript|TypeScript|React|Next\.js|Node\.js|Flask|Django|FastAPI|"
-        r"Java|C\+\+|C#|Go|Rust|SQL|PostgreSQL|MySQL|MongoDB|Redis|AWS|Azure|GCP|"
-        r"Docker|Kubernetes|GraphQL|REST|TensorFlow|PyTorch|Pandas|Spark|Tableau|Power BI|"
-        r"Figma|Salesforce|Excel|Git|Linux)\b",
-        re.IGNORECASE,
-    )
-    found = [m.group(0) for m in tech_pattern.finditer(text)]
-    found.extend([
-        w for w in re.findall(r"\b[A-Z0-9][A-Z0-9+#.]{2,}\b", text)
-        if len(w) <= 12 and w.lower() not in ACTION_VERBS
-    ])
-    return _unique(found)
+def _default_hint(qtype: str, context: dict):
+    hints = {
+        "behavioral": "Use the STAR method: Situation, Task, Action, Result.",
+        "situational": "Use the STAR method and be concrete about the exact steps you'd take.",
+        "technical": "Explain your reasoning and trade-offs, not just the final answer.",
+        "resume-specific": "Be concrete — name the project, your specific role, and the outcome.",
+        "culture-fit": "Be authentic and back your answer with a real example.",
+        "coding": "Write clean, working code — think about edge cases before you submit.",
+    }
+    return hints.get(qtype, f"Answer using clear, structured reasoning for a {qtype} question.")
 
 
-def _extract_roles(text: str) -> list[str]:
-    role_pattern = re.compile(
-        r"\b([A-Z][A-Za-z ]{2,40}?(Engineer|Developer|Analyst|Manager|Designer|Consultant|Intern|Lead|Specialist|Architect))\b"
-    )
-    return _unique([m.group(1).strip() for m in role_pattern.finditer(text)])
-
-
-def _extract_project_lines(sentences: list[str]) -> list[str]:
-    project_words = re.compile(r"\b(project|built|created|developed|designed|implemented|launched|platform|app|system|dashboard)\b", re.I)
-    return _unique([s[:180].rstrip(".;:, ") for s in sentences if project_words.search(s)])[:8]
-
-
-def _extract_achievement_lines(sentences: list[str]) -> list[str]:
-    achievement_words = re.compile(r"\b(achieved|improved|increased|reduced|optimized|led|managed|saved|won|ranked|delivered|%|\d+)\b", re.I)
-    return _unique([s[:180].rstrip(".;:, ") for s in sentences if achievement_words.search(s)])[:8]
-
-
-def _extract_possible_gaps(text: str) -> list[str]:
-    gaps = []
-    if not re.search(r"\d+%|\$\d+|\d+\s*(users|customers|ms|seconds|hours|days|people)", text, re.I):
-        gaps.append("Few quantified outcomes are visible in the resume.")
-    if len(_extract_technologies(text)) < 3:
-        gaps.append("Technical/tooling evidence is light or not explicitly named.")
-    if not re.search(r"\b(led|owned|managed|mentored|coordinated)\b", text, re.I):
-        gaps.append("Ownership or leadership scope is not obvious.")
-    return gaps
-
-
-def _sentences(text: str) -> list[str]:
-    chunks = re.split(r"(?<=[.!?])\s+|\n+", text)
-    return [_normalize_space(c) for c in chunks if len(_normalize_space(c)) > 20]
-
-
-def _unique(items: list[str]) -> list[str]:
-    seen = set()
-    result = []
-    for item in items:
-        clean = _normalize_space(str(item)).strip(" -")
-        key = clean.lower()
-        if clean and key not in seen:
-            seen.add(key)
-            result.append(clean)
-    return result
-
-
-def _is_generic_question(question: str) -> bool:
-    lower = question.lower()
-    generic = [
-        "tell me about yourself",
-        "what are your strengths",
-        "what are your weaknesses",
-        "why should we hire you",
-        "where do you see yourself",
+# FIXED JSON PARSER
+def parse_json_object(raw: str):
+    try:
+        raw = re.sub(r"```json|```", "", raw).strip()
+        return json.loads(raw)
+    except:
+        return []
+def fallback_followup(original_question: str, candidate_answer: str, company: str, role: str) -> dict:
+    pool = [
+        "That's helpful context. Can you elaborate specifically on your individual contribution and the final outcome?",
+        "Can you walk me through a concrete example with specific numbers or measurable outcomes?",
+        "What was the hardest part of that, and how did you specifically get through it?",
+        "Can you go one level deeper on the technical approach you took there?",
     ]
-    return any(phrase in lower for phrase in generic)
-
-
-def _question_key(question: str) -> str:
-    words = [w for w in re.findall(r"[a-z0-9]+", question.lower()) if w not in STOPWORDS]
-    return " ".join(words[:12])
-
-
-def _first_unused_type(used_types: set[str]) -> str:
-    for qtype in QUESTION_TYPES:
-        if qtype not in used_types:
-            return qtype
-    return "behavioral"
-
-
-def _default_hint(qtype: str, context: dict) -> str:
-    if qtype == "technical":
-        return "Name the constraints, compare alternatives, and explain the trade-off behind your final choice."
-    if qtype == "culture-fit":
-        return f"Connect your motivation to {context['company']} with a concrete example from your work style."
-    if qtype == "resume-specific":
-        return "Use exact evidence from your resume, clarify your personal ownership, and include a measurable result."
-    if qtype == "situational":
-        return "Think aloud through diagnosis, stakeholders, trade-offs, and the first action you would take."
-    return "Answer with STAR: Situation, Task, Action, Result, plus one lesson learned."
-
-
-def _extract_quote(answer: str) -> str:
-    words = [w.strip(".,;:!?\"'()") for w in answer.split() if len(w.strip(".,;:!?\"'()")) > 3]
-    if not words:
-        return ""
-    for i, word in enumerate(words):
-        if word.lower() in ACTION_VERBS:
-            return " ".join(words[i:i + 5])
-    return " ".join(words[:5])
+    return {
+        "followup": random.choice(pool),
+        "reason": "Fallback due to missing/failed AI response.",
+        "probe_target": "depth and ownership",
+        "quote_used": ""
+    }

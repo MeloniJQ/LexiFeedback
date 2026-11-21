@@ -14,7 +14,7 @@ Kept for backward compat:
 """
 
 from flask import Blueprint, request, jsonify
-from models import db, PracticeSession
+from models import db, PracticeSession, InterviewProgress, User, SavedVocabulary
 from services.ai_service import (
     generate_questions_from_resume,
     generate_followup_question,
@@ -23,6 +23,8 @@ from services.ai_service import (
     extract_resume_text,
 )
 from utils.jwt_handler import token_required
+from services.goal_service import auto_track_progress
+from services.level_progression_service import check_and_promote
 import os
 import re
 import json
@@ -37,14 +39,17 @@ UPLOAD_DIR = "uploads"
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def extract_score(feedback_text: str) -> str:
+def extract_score(feedback_text: str) -> str | None:
     match = re.search(r"Overall Score:\s*(\d+)/10", feedback_text, re.IGNORECASE)
     if match:
         return f"{match.group(1)}/10"
     match = re.search(r"Score:\s*(\d+)%", feedback_text, re.IGNORECASE)
     if match:
         return f"{round(int(match.group(1)) / 10)}/10"
-    return "8/10"
+    # No parsable score in the AI's feedback. This used to invent "8/10",
+    # which inflated averages and would now also count toward automatic
+    # level promotion — so store no score instead (the dashboard shows "—").
+    return None
 
 
 def _save_file(file) -> str:
@@ -85,7 +90,7 @@ def start_interview(payload):
       role             (required)
       job_description  (optional)
       key_skills       (optional)
-      num_questions    (optional, default 5, max 20)
+      num_questions    (optional, default 10, max 20)
       resume           (optional file — PDF / DOCX / TXT)
 
     Returns:
@@ -99,7 +104,7 @@ def start_interview(payload):
             job_description = (request.form.get("job_description") or "").strip()
             key_skills      = (request.form.get("key_skills")      or "").strip()
             asked_questions = _json_list(request.form.get("asked_questions"))
-            num_questions   = int(request.form.get("num_questions", 5))
+            num_questions   = int(request.form.get("num_questions", 10))
             resume_file     = request.files.get("resume")
         else:
             data            = request.json or {}
@@ -108,7 +113,7 @@ def start_interview(payload):
             job_description = (data.get("job_description") or "").strip()
             key_skills      = (data.get("key_skills")      or "").strip()
             asked_questions = _json_list(data.get("asked_questions"))
-            num_questions   = int(data.get("num_questions", 5))
+            num_questions   = int(data.get("num_questions", 10))
             resume_file     = None
 
         if not company or not role:
@@ -116,6 +121,16 @@ def start_interview(payload):
 
         # Validate num_questions
         num_questions = max(1, min(num_questions, 20))
+
+        # CEFR level (Feature 1 → Feature 2 integration): question phrasing
+        # (vocabulary/sentence complexity) scales to the candidate's assessed
+        # English level. This is about LANGUAGE difficulty, not technical
+        # difficulty — the role/company/resume context still drives subject
+        # matter; english_level only changes how the question is worded.
+        english_level = None
+        user = User.query.get(payload["user_id"])
+        if user and user.english_level:
+            english_level = user.english_level
 
         # ── Extract resume text ──────────────────────────────────────────────
         resume_text = ""
@@ -132,6 +147,7 @@ def start_interview(payload):
             key_skills      = key_skills,
             asked_questions = asked_questions,
             num_questions   = num_questions,
+            english_level   = english_level,
         )
 
         return jsonify({
@@ -202,11 +218,12 @@ def get_session_feedback(payload):
     """
     Body (JSON):
       {
-        "transcript":    "...",   ← full Q&A conversation as plain text
-        "company":       "...",
-        "role":          "...",
-        "session_type":  "interview",
-        "title":         "optional custom title"
+        "transcript":       "...",   ← full Q&A conversation as plain text
+        "company":          "...",
+        "role":             "...",
+        "session_type":     "interview",
+        "title":            "optional custom title",
+        "duration_seconds": 612       (optional — total time spent on this interview)
       }
     """
     try:
@@ -217,6 +234,12 @@ def get_session_feedback(payload):
         session_type = (data.get("session_type") or "interview").strip()
         title        = (data.get("title")        or f"{role} Practice at {company}").strip()
 
+        duration_seconds = data.get("duration_seconds")
+        try:
+            duration_seconds = max(0.0, float(duration_seconds)) if duration_seconds is not None else None
+        except (TypeError, ValueError):
+            duration_seconds = None
+
         if not transcript:
             return jsonify({"error": "transcript cannot be empty"}), 400
 
@@ -224,21 +247,120 @@ def get_session_feedback(payload):
         score    = extract_score(feedback)
 
         session_record = PracticeSession(
-            user_id      = payload["user_id"],
-            session_type = session_type,
-            title        = title,
-            transcript   = transcript,
-            feedback     = feedback,
-            score        = score,
+            user_id          = payload["user_id"],
+            session_type     = session_type,
+            title            = title,
+            transcript       = transcript,
+            feedback         = feedback,
+            score            = score,
+            duration_seconds = duration_seconds,
         )
         db.session.add(session_record)
         db.session.commit()
+
+        # Auto-track: bump progress/streak on any of the user's active goals
+        # matching this practice mode (interview / presentation / conversation).
+        try:
+            auto_track_progress(payload["user_id"], session_type)
+        except Exception:
+            pass  # Never let goal tracking break the main session save
+
+        # Automatic CEFR level progression (never raises).
+        check_and_promote(payload["user_id"])
 
         return jsonify({
             "message": "Session saved successfully",
             "session": session_record.to_dict(),
         }), 201
 
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Autosave / resume-on-refresh (Feature 2)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# The frontend generates a `session_key` (uuid) once, when the user starts an
+# interview, and POSTs the full running snapshot here immediately after every
+# answer is scored — *before* advancing to the next question. If the page is
+# refreshed, GET /progress/<session_key> (or /progress/active) returns that
+# snapshot so previously-answered questions are never lost.
+
+@interview_bp.route("/progress/save", methods=["POST"])
+@token_required
+def save_progress(payload):
+    """
+    Body (JSON):
+      {
+        "session_key": "uuid-...",
+        "company": "...",
+        "role": "...",
+        "snapshot": { ...arbitrary JSON: questions, pairs, currentIdx, etc... },
+        "status": "in_progress" | "completed"   (optional, default "in_progress")
+      }
+    Upserts — safe to call after every single answer.
+    """
+    try:
+        data = request.json or {}
+        session_key = (data.get("session_key") or "").strip()
+        if not session_key:
+            return jsonify({"error": "session_key is required"}), 400
+
+        record = InterviewProgress.query.filter_by(
+            user_id=payload["user_id"], session_key=session_key
+        ).first()
+
+        if not record:
+            record = InterviewProgress(user_id=payload["user_id"], session_key=session_key)
+            db.session.add(record)
+
+        record.company = data.get("company")
+        record.role = data.get("role")
+        record.snapshot = data.get("snapshot", {})
+        record.status = data.get("status", "in_progress")
+
+        db.session.commit()
+        return jsonify({"message": "Progress saved", "session_key": session_key}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        print(f"[interview/progress/save] Route error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@interview_bp.route("/progress/active", methods=["GET"])
+@token_required
+def get_active_progress(payload):
+    """Returns the user's most recent in-progress interview, if any — used
+    on page load to offer a 'resume?' prompt without the client needing to
+    already know a session_key (e.g. right after a refresh)."""
+    try:
+        record = (
+            InterviewProgress.query
+            .filter_by(user_id=payload["user_id"], status="in_progress")
+            .order_by(InterviewProgress.updated_at.desc())
+            .first()
+        )
+        return jsonify({"progress": record.to_dict() if record else None}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@interview_bp.route("/progress/<session_key>", methods=["DELETE"])
+@token_required
+def discard_progress(payload, session_key):
+    """Marks a saved attempt as abandoned (used when the user chooses 'Start
+    Fresh' instead of resuming, or after the interview completes normally)."""
+    try:
+        record = InterviewProgress.query.filter_by(
+            user_id=payload["user_id"], session_key=session_key
+        ).first()
+        if record:
+            record.status = "abandoned"
+            db.session.commit()
+        return jsonify({"message": "Discarded"}), 200
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": str(e)}), 500
@@ -268,7 +390,19 @@ def get_user_stats(payload):
     try:
         sessions = PracticeSession.query.filter_by(user_id=payload["user_id"]).all()
         total_sessions = len(sessions)
-        total_hours    = round((total_sessions * 10) / 60, 1)
+
+        # Sum real durations where we have them. Older sessions logged before
+        # duration tracking was added (or any session whose duration wasn't
+        # captured) have duration_seconds = None, so we fall back to a 10-min
+        # estimate only for those specific sessions instead of assuming every
+        # session took exactly 10 minutes.
+        total_seconds = 0.0
+        for s in sessions:
+            if s.duration_seconds is not None:
+                total_seconds += s.duration_seconds
+            else:
+                total_seconds += 10 * 60
+        total_hours = round(total_seconds / 3600, 1)
 
         total_score, valid_count = 0, 0
         for s in sessions:
@@ -293,7 +427,7 @@ def get_user_stats(payload):
                         break
 
         type_data = {t: {"count": 0, "sum": 0, "n": 0}
-                     for t in ("interview", "presentation", "conversation", "reading")}
+                    for t in ("interview", "presentation", "conversation", "reading")}
         for s in sessions:
             t = s.session_type.lower()
             if t in type_data:
@@ -313,6 +447,67 @@ def get_user_stats(payload):
                 "improvement": f"+{max(0, avg - 50)}%" if avg else "+0%",
             }
 
+        # ── Activity timeline (last 30 days) — per-type session counts per
+        # day, used to draw the activity graph on the Progress/Analysis page.
+        WINDOW_DAYS = 30
+        today = date.today()
+        day_list = [today - timedelta(days=i) for i in range(WINDOW_DAYS - 1, -1, -1)]
+        by_day = {d: {"interview": 0, "presentation": 0, "conversation": 0, "reading": 0} for d in day_list}
+        window_start = today - timedelta(days=WINDOW_DAYS - 1)
+        for s in sessions:
+            d = s.created_at.date() if s.created_at else None
+            if d and d >= window_start and d in by_day:
+                t = s.session_type.lower()
+                if t in by_day[d]:
+                    by_day[d][t] += 1
+
+        activity_timeline = [
+            {
+                "date": d.isoformat(),
+                "interview": by_day[d]["interview"],
+                "presentation": by_day[d]["presentation"],
+                "conversation": by_day[d]["conversation"],
+                "reading": by_day[d]["reading"],
+                "total": sum(by_day[d].values()),
+            }
+            for d in day_list
+        ]
+
+        # ── Vocabulary learned (Word of the Day saves) — same 30-day window,
+        # plus an all-time total and cumulative-by-day series for the graph.
+        vocab_entries = (
+            SavedVocabulary.query
+            .filter_by(user_id=payload["user_id"])
+            .order_by(SavedVocabulary.created_at.asc())
+            .all()
+        )
+        total_vocab = len(vocab_entries)
+        vocab_by_day = {d: 0 for d in day_list}
+        for v in vocab_entries:
+            d = v.created_at.date() if v.created_at else None
+            if d and d in vocab_by_day:
+                vocab_by_day[d] += 1
+
+        # Cumulative total as of the START of the window, so the running
+        # total in the timeline is accurate even though we only iterate the
+        # last 30 days.
+        running_total = sum(
+            1 for v in vocab_entries if v.created_at and v.created_at.date() < window_start
+        )
+        vocabulary_timeline = []
+        for d in day_list:
+            running_total += vocab_by_day[d]
+            vocabulary_timeline.append({
+                "date": d.isoformat(),
+                "learned": vocab_by_day[d],
+                "cumulative": running_total,
+            })
+
+        this_week_start = today - timedelta(days=6)
+        vocab_this_week = sum(
+            1 for v in vocab_entries if v.created_at and v.created_at.date() >= this_week_start
+        )
+
         return jsonify({
             "total_sessions": total_sessions,
             "total_hours":    total_hours,
@@ -324,6 +519,12 @@ def get_user_stats(payload):
                 skill_entry("Conversation Fluency", "conversation"),
                 skill_entry("Reading Comprehension","reading"),
             ],
+            "activity_timeline": activity_timeline,
+            "vocabulary": {
+                "total_learned": total_vocab,
+                "learned_this_week": vocab_this_week,
+                "timeline": vocabulary_timeline,
+            },
         }), 200
 
     except Exception as e:

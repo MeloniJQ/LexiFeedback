@@ -6,6 +6,17 @@ export interface User {
   full_name: string
   age?: number
   education?: string
+  english_level?: string | null
+  assessment_completed?: boolean
+  assessment_date?: string | null
+  overall_score?: number | null
+  grammar_score?: number | null
+  vocabulary_score?: number | null
+  pronunciation_score?: number | null
+  fluency_score?: number | null
+  speaking_score?: number | null
+  reading_score?: number | null
+  listening_score?: number | null
 }
 
 export interface AuthResponse {
@@ -18,23 +29,23 @@ const USER_KEY = "auth_user"
 
 export function getToken() {
   if (typeof window === "undefined") return null
-  return localStorage.getItem(TOKEN_KEY)
+  return sessionStorage.getItem(TOKEN_KEY)
 }
 
 export function getUser() {
   if (typeof window === "undefined") return null
-  const user = localStorage.getItem(USER_KEY)
+  const user = sessionStorage.getItem(USER_KEY)
   return user ? JSON.parse(user) : null
 }
 
 export function setAuth(token: string, user: User) {
-  localStorage.setItem(TOKEN_KEY, token)
-  localStorage.setItem(USER_KEY, JSON.stringify(user))
+  sessionStorage.setItem(TOKEN_KEY, token)
+  sessionStorage.setItem(USER_KEY, JSON.stringify(user))
 }
 
 export function clearAuth() {
-  localStorage.removeItem(TOKEN_KEY)
-  localStorage.removeItem(USER_KEY)
+  sessionStorage.removeItem(TOKEN_KEY)
+  sessionStorage.removeItem(USER_KEY)
 }
 
 export async function getCurrentUser() {
@@ -131,4 +142,3 @@ export async function signInWithEmail(email: string, password: string) {
 export async function signOut() {
   clearAuth()
 }
-

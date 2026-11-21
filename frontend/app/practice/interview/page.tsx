@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -8,11 +8,12 @@ import { Label }    from '@/components/ui/label'
 import {
   Mic, Square, Send, Upload, FileText, Home,
   ChevronRight, Loader2, CheckCircle2, MessageSquare,
-  Brain, AlertCircle, RotateCcw, Star, BarChart2,
+  Brain, AlertCircle, AlertTriangle, RotateCcw, Star, BarChart2,
   Volume2, Zap, Award, TrendingUp, X
 } from 'lucide-react'
 import Link from 'next/link'
 import { getToken } from '@/lib/auth'
+import { API_URL as API, generateInterviewQuestions } from '@/lib/api'
 import { useVoiceRecorder } from '@/hooks/use-voice-recorder'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -22,6 +23,14 @@ interface Question {
   type: string
   question: string
   hint: string
+  // Present only when type === 'coding' — these drive the code editor UI
+  // and get sent to the real compiler/interpreter to actually run the
+  // candidate's code, instead of just judging it by eye.
+  language?: 'python' | 'javascript'
+  function_name?: string
+  starter_code?: string
+  examples?: { input: string; output: string }[]
+  test_cases?: { input: any[]; expected_output: any }[]
 }
 
 interface VoiceAnalysis {
@@ -55,6 +64,47 @@ interface VoiceAnalysis {
     sentence_count: number
     avg_sentence_length: number
   }
+  // True when the real AI reviewer couldn't be reached and this is a
+  // degraded local estimate — never a verified judgement of correctness.
+  is_fallback?: boolean
+  // Present only for coding-question analysis — the REAL pass/fail results
+  // from actually running the candidate's code through an interpreter.
+  test_results?: { input: any; expected: any; actual: any; passed: boolean; error?: string | null }[]
+  test_summary?: { passed: number; total: number; execution_error?: string | null }
+}
+
+interface AgenticAnalysis {
+  scores: { content: number; delivery: number; vocabulary: number; overall: number }
+  content_analysis: {
+    star_used: boolean
+    relevance: string
+    specificity: string
+    key_strength: string
+    key_gap: string
+  }
+  pattern_analysis: {
+    pattern_trend: 'improving' | 'consistent' | 'declining'
+    recurring_strength: string
+    recurring_gap: string
+    demonstrates_growth: string
+  }
+  competency_alignment: {
+    demonstrated_competencies: string[]
+    confidence_level: 'strong' | 'moderate' | 'weak'
+    risk_flag: string | null
+  }
+  coaching: { immediate_tip: string; if_to_improve: string }
+  question_type?: string
+}
+
+interface SessionComparison {
+  strengths_profile: string[]
+  growth_areas: string[]
+  interview_arc: string
+  role_fit: 'strong' | 'moderate' | 'weak'
+  risk_assessment: string
+  hiring_recommendation: string
+  final_thoughts: string
 }
 
 interface FollowupData {
@@ -63,13 +113,25 @@ interface FollowupData {
   quote_used: string
 }
 
+interface FollowupRound {
+  data: FollowupData
+  transcript: string
+  // Real per-answer analysis for this follow-up, same shape/quality as the
+  // main question's analysis — was previously never generated at all.
+  analysis?: VoiceAnalysis | null
+}
+
 interface QAPair {
   question: Question
   transcript: string
   analysis: VoiceAnalysis
-  followup: FollowupData
-  followupTranscript?: string
+  followups: FollowupRound[]
 }
+
+// Cap on how many follow-up rounds can be chained on a single question —
+// each round is a full record -> transcribe -> generate cycle, so an
+// unbounded chain would make the interview drag on indefinitely.
+const MAX_FOLLOWUP_ROUNDS = 3
 
 type Stage =
   | 'setup'
@@ -83,7 +145,7 @@ type Stage =
   | 'done'
   | 'feedback'
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000/api'
+
 
 const TYPE_COLORS: Record<string, string> = {
   behavioral:        'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300',
@@ -91,6 +153,7 @@ const TYPE_COLORS: Record<string, string> = {
   situational:       'bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300',
   'culture-fit':     'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300',
   'resume-specific': 'bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-300',
+  coding:            'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-300',
 }
 
 const SCORE_COLOR = (n: number) =>
@@ -116,6 +179,11 @@ async function authFetch(url: string, init: RequestInit = {}) {
 export default function InterviewPracticePage() {
   const [setup, setSetup] = useState({
     company: '', role: '', jobDescription: '', keySkills: '', resume: null as File | null,
+    // Explicit opt-in for a real hands-on coding question. Defaults to false
+    // so nobody is surprised by a coding question they didn't ask for — the
+    // candidate must actively confirm they know Python or JavaScript, the
+    // only two languages the backend can actually compile/run.
+    wantsCoding: false,
   })
   const [stage, setStage]             = useState<Stage>('setup')
   const [questions, setQuestions]     = useState<Question[]>([])
@@ -123,15 +191,73 @@ export default function InterviewPracticePage() {
   const [pairs, setPairs]             = useState<QAPair[]>([])
   const [transcript, setTranscript]   = useState('')       // editable after transcribe
   const [currentAnalysis, setCurrentAnalysis] = useState<VoiceAnalysis | null>(null)
+  // currentFollowup is whichever follow-up round is currently being shown/answered.
+  // followupChain accumulates COMPLETED rounds for the current main question, so
+  // each new follow-up call can be told what's already been asked/answered.
   const [currentFollowup, setCurrentFollowup] = useState<FollowupData | null>(null)
+  const [followupChain, setFollowupChain] = useState<FollowupRound[]>([])
+  const [generatingNextFollowup, setGeneratingNextFollowup] = useState(false)
+  // Agentic layer: agenticAnalyses accumulates across the whole session and is
+  // sent back as "memory" (previous_analyses) on every subsequent call, so the
+  // AI's evaluation of question 5 is informed by how you answered 1-4.
+  const [currentAgentic, setCurrentAgentic] = useState<AgenticAnalysis | null>(null)
+  const [agenticAnalyses, setAgenticAnalyses] = useState<AgenticAnalysis[]>([])
+  const [sessionComparison, setSessionComparison] = useState<SessionComparison | null>(null)
+  const [sessionComparisonLoading, setSessionComparisonLoading] = useState(false)
   const [followupTranscript, setFollowupTranscript] = useState('')
+  // Real analysis of the current follow-up answer — mirrors currentAnalysis
+  // for the main question, but was previously never populated at all.
+  const [followupAnalysis, setFollowupAnalysis] = useState<VoiceAnalysis | null>(null)
+  const [analyzingFollowup, setAnalyzingFollowup] = useState(false)
+
+  // ── Coding-question state ─────────────────────────────────────────────────
+  // Separate from `transcript` (voice) since a coding answer is typed code,
+  // not spoken text — but once submitted it's stored INTO `transcript` too,
+  // so the rest of the pipeline (pairs, final feedback) needs no changes.
+  const [code, setCode] = useState('')
+  const [codeRunResult, setCodeRunResult] = useState<{
+    results: { input: any; expected: any; actual: any; passed: boolean; error?: string | null }[]
+    passed_count: number
+    total_count: number
+    all_passed: boolean
+    execution_error: string | null
+  } | null>(null)
+  const [runningCode, setRunningCode] = useState(false)
   const [finalFeedback, setFinalFeedback] = useState('')
   const [error, setError]             = useState('')
   const [resumeParsed, setResumeParsed] = useState(false)
 
+  // ── Feature 2: refresh-persistence ────────────────────────────────────────
+  // sessionKey identifies this attempt server-side (models/interview_progress.py).
+  // Generated once when questions are first loaded, then reused for every
+  // autosave call so refreshing the page can resume the same attempt.
+  const [sessionKey, setSessionKey] = useState<string | null>(null)
+  const [resumeAvailable, setResumeAvailable] = useState<{
+    session_key: string
+    company: string
+    role: string
+    snapshot: { setup: any; questions: Question[]; pairs: QAPair[]; currentIdx: number }
+  } | null>(null)
+  const [checkingResume, setCheckingResume] = useState(true)
+
+  // ── Session duration tracking ─────────────────────────────────────────────
+  // Stamped the moment the interview actually starts (questions generated /
+  // resumed), so we can report how long the user really spent when the
+  // session's final feedback is saved, instead of a hardcoded estimate.
+  const sessionStartRef = useRef<number | null>(null)
+
   const recorder         = useVoiceRecorder()
   const followupRecorder = useVoiceRecorder()
   const currentQ         = questions[currentIdx]
+
+  // Load the starter code whenever a new coding question comes up for
+  // answering, so the editor isn't left with the previous question's code.
+  useEffect(() => {
+    if (stage === 'answering' && currentQ?.type === 'coding') {
+      setCode(currentQ.starter_code || '')
+      setCodeRunResult(null)
+    }
+  }, [currentIdx, stage])
 
   // ── Format ms → "0:42" ────────────────────────────────────────────────────
   const fmtDuration = (ms: number) => {
@@ -139,34 +265,189 @@ export default function InterviewPracticePage() {
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
   }
 
-  // ── Step 1: Generate questions ────────────────────────────────────────────
-  const handleStart = async () => {
-    if (!setup.company.trim() || !setup.role.trim()) {
-      setError('Company and Job Title are required.')
+  // ── Feature 2: autosave every answer server-side before advancing ────────
+  const saveProgress = async (
+    key: string,
+    status: 'in_progress' | 'completed',
+    snapshotPairs: QAPair[],
+    idx: number,
+    qs: Question[] = questions,
+  ) => {
+    try {
+      await authFetch(`${API}/interview/progress/save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_key: key,
+          company: setup.company,
+          role: setup.role,
+          status,
+          snapshot: {
+            setup: {
+              company: setup.company,
+              role: setup.role,
+              jobDescription: setup.jobDescription,
+              keySkills: setup.keySkills,
+            },
+            questions: qs,
+            pairs: snapshotPairs,
+            currentIdx: idx,
+          },
+        }),
+      })
+      localStorage.setItem('lexifeed_interview_session_key', key)
+    } catch (e) {
+      // Autosave failing shouldn't block the live interview — the user can
+      // still finish this attempt, they'd just lose refresh-resume for it.
+      console.error('Autosave failed (non-blocking):', e)
+    }
+  }
+
+  const discardProgress = async (key: string) => {
+    try {
+      await authFetch(`${API}/interview/progress/${key}`, { method: 'DELETE' })
+    } catch {
+      // best-effort
+    }
+    localStorage.removeItem('lexifeed_interview_session_key')
+  }
+
+  // On mount: check whether the user has an interview in progress (e.g. they
+  // refreshed mid-session) and offer to resume it before showing the setup form.
+  useEffect(() => {
+    (async () => {
+      try {
+        const data = await authFetch(`${API}/interview/progress/active`, { method: 'GET' })
+        const progress = data.progress
+        if (progress && progress.snapshot?.questions?.length) {
+          setResumeAvailable({
+            session_key: progress.session_key,
+            company: progress.company || progress.snapshot.setup?.company || '',
+            role: progress.role || progress.snapshot.setup?.role || '',
+            snapshot: progress.snapshot,
+          })
+        }
+      } catch (e) {
+        console.error('Could not check for an in-progress interview:', e)
+      } finally {
+        setCheckingResume(false)
+      }
+    })()
+  }, [])
+
+  const handleResumeInterview = () => {
+    if (!resumeAvailable) return
+    const { snapshot, session_key } = resumeAvailable
+    setSetup((prev) => ({ ...prev, ...snapshot.setup, resume: null }))
+    setQuestions(snapshot.questions)
+    setPairs(snapshot.pairs)
+    setCurrentIdx(snapshot.currentIdx)
+    setSessionKey(session_key)
+    localStorage.setItem('lexifeed_interview_session_key', session_key)
+
+    // Resume at the safe checkpoint right after the last saved answer —
+    // mid-followup-chain state isn't persisted, so we drop them into a
+    // clean "answering" state for the next question rather than guessing
+    // where exactly in a followup exchange they were.
+    if (snapshot.currentIdx < snapshot.questions.length) {
+      setStage('answering')
+    } else {
+      setStage('done')
+    }
+    // Resume doesn't persist the original start timestamp, so timing
+    // restarts from here — still far more accurate than a fixed 10 min.
+    sessionStartRef.current = Date.now()
+    setResumeAvailable(null)
+  }
+
+  const handleDismissResume = async () => {
+    if (resumeAvailable) await discardProgress(resumeAvailable.session_key)
+    setResumeAvailable(null)
+  }
+
+  // ── Generate questions (profile + plan are now built automatically inside this single step) ──
+  const handleGenerateQuestions = async () => {
+    if (!setup.role.trim()) {
+      setError('Job Title is required.')
       return
     }
+    if (!setup.resume) {
+      setError('Upload a resume before generating interview questions.')
+      return
+    }
+
     setError('')
     setStage('loading_questions')
     try {
       const token = getToken()
-      const fd = new FormData()
-      fd.append('company',         setup.company)
-      fd.append('role',            setup.role)
-      fd.append('job_description', setup.jobDescription)
-      fd.append('key_skills',      setup.keySkills)
-      if (setup.resume) fd.append('resume', setup.resume)
 
-      const res  = await fetch(`${API}/interview/start`, {
-        method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd,
+      // Build candidate profile (was the separate "Build Candidate Profile" button)
+      if (setup.resume) {
+        const fd = new FormData()
+        fd.append('file', setup.resume)
+        const resumeRes = await fetch(`${API}/candidate/resume/upload`, {
+          method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd,
+        })
+        const resumeData = await resumeRes.json()
+        if (!resumeRes.ok) throw new Error(resumeData.error || 'Resume parsing failed')
+      }
+      if (setup.jobDescription.trim()) {
+        const jdRes = await fetch(`${API}/candidate/jd/analyze`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ job_description: setup.jobDescription }),
+        })
+        const jdData = await jdRes.json()
+        if (!jdRes.ok) throw new Error(jdData.error || 'Job description analysis failed')
+      }
+
+      // Generate the interview plan (was the separate "Generate Interview Plan" button)
+      // Send company/role explicitly — the plan otherwise has no way to know
+      // what the user is actually interviewing for, and every question
+      // generated downstream depends on this.
+      const planRes = await fetch(`${API}/interview/plan/generate`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company: setup.company, role: setup.role }),
       })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error)
-      setQuestions(data.questions)
-      setResumeParsed(data.resume_parsed ?? false)
+      const planData = await planRes.json()
+      if (!planRes.ok) throw new Error(planData.error || 'Interview plan generation failed')
+
+      // Generate the actual questions
+      const data = await generateInterviewQuestions(10, setup.wantsCoding)
+      const mapped = data.questions.map((q, index) => {
+        // The backend marks the one real coding question with
+        // category === "Coding" and packs its extra fields into
+        // q.metadata.coding (see agents/question_generator.py). Everything
+        // else keeps its existing category-based `type` untouched.
+        const codingFields = q.category === 'Coding' ? (q.metadata as any)?.coding : null
+        return {
+          id: index + 1,
+          type: codingFields ? 'coding' : (q.category || 'technical'),
+          question: q.question_text,
+          hint: `${q.category || 'General'} · ${q.topic || 'General'} · ${q.difficulty || 'Medium'}`,
+          ...(codingFields ? {
+            language:      codingFields.language,
+            function_name: codingFields.function_name,
+            starter_code:  codingFields.starter_code,
+            examples:      codingFields.examples,
+            test_cases:    codingFields.test_cases,
+          } : {}),
+        }
+      })
+
+      setQuestions(mapped)
+      setResumeParsed(Boolean(setup.resume))
       setCurrentIdx(0)
       setPairs([])
       setTranscript('')
       setStage('answering')
+      sessionStartRef.current = Date.now()
+
+      // Feature 2: start a fresh autosave session for this attempt.
+      const newKey = (crypto as any).randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`
+      setSessionKey(newKey)
+      localStorage.setItem('lexifeed_interview_session_key', newKey)
     } catch (e: any) {
       setError(e.message)
       setStage('setup')
@@ -230,6 +511,33 @@ export default function InterviewPracticePage() {
       })
       setCurrentAnalysis(analysis)
 
+      // Agentic layer: this call gets the FULL history of prior answers in
+      // this session (agenticAnalyses) as "memory", so the AI can judge this
+      // answer relative to how the candidate has been trending, not in
+      // isolation. Wrapped separately so a hiccup here never blocks the core
+      // per-answer analysis/follow-up flow above.
+      try {
+        const agentic: AgenticAnalysis = await authFetch(`${API}/voice/analyze-agentic`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            transcript:        text,
+            question:          currentQ.question,
+            question_type:     currentQ.type,
+            company:           setup.company,
+            role:              setup.role,
+            question_num:      currentIdx + 1,
+            total_questions:   questions.length,
+            previous_analyses: agenticAnalyses,
+          }),
+        })
+        setCurrentAgentic(agentic)
+        setAgenticAnalyses(prev => [...prev, { ...agentic, question_type: currentQ.type }])
+      } catch (agenticErr) {
+        console.error('Agentic analysis failed (non-blocking):', agenticErr)
+        setCurrentAgentic(null)
+      }
+
       // Immediately generate follow-up
       const fu = await authFetch(`${API}/voice/followup`, {
         method: 'POST',
@@ -250,11 +558,151 @@ export default function InterviewPracticePage() {
     }
   }
 
+  // ── Coding questions: Run Code (quick check, no AI, no submission) ───────
+  // Lets the candidate test their code against the real test cases as many
+  // times as they like before submitting, same as a real coding interview.
+  const handleRunCode = async () => {
+    if (!currentQ || currentQ.type !== 'coding') return
+    if (!code.trim()) {
+      setError('Write some code before running it.')
+      return
+    }
+    setError('')
+    setRunningCode(true)
+    try {
+      const result = await authFetch(`${API}/interview/code/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code,
+          language:      currentQ.language,
+          function_name: currentQ.function_name,
+          test_cases:    currentQ.test_cases,
+        }),
+      })
+      setCodeRunResult(result)
+    } catch (e: any) {
+      setError(`Could not run code: ${e.message}`)
+    } finally {
+      setRunningCode(false)
+    }
+  }
+
+  // ── Coding questions: Submit for real analysis ────────────────────────────
+  // Actually EXECUTES the code against the real test cases (via
+  // /interview/code/analyze → services/code_execution_service.py), then
+  // layers AI commentary on code quality on top of those real results.
+  // The submitted code is also stored into `transcript` so the rest of the
+  // pipeline (pairs, session feedback, done screen) needs no special-casing.
+  const handleSubmitCodeAnswer = async () => {
+    if (!currentQ || currentQ.type !== 'coding') return
+    if (!code.trim()) {
+      setError('Write some code before submitting.')
+      return
+    }
+    setError('')
+    setStage('analyzing')
+    try {
+      const analysis: VoiceAnalysis = await authFetch(`${API}/interview/code/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code,
+          language:      currentQ.language,
+          function_name: currentQ.function_name,
+          test_cases:    currentQ.test_cases,
+          question:      currentQ.question,
+          company:       setup.company,
+          role:          setup.role,
+        }),
+      })
+      setCurrentAnalysis(analysis)
+      setTranscript(code)
+
+      try {
+        const agentic: AgenticAnalysis = await authFetch(`${API}/voice/analyze-agentic`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            transcript:        code,
+            question:          currentQ.question,
+            question_type:     currentQ.type,
+            company:           setup.company,
+            role:              setup.role,
+            question_num:      currentIdx + 1,
+            total_questions:   questions.length,
+            previous_analyses: agenticAnalyses,
+          }),
+        })
+        setCurrentAgentic(agentic)
+        setAgenticAnalyses(prev => [...prev, { ...agentic, question_type: currentQ.type }])
+      } catch (agenticErr) {
+        console.error('Agentic analysis failed (non-blocking):', agenticErr)
+        setCurrentAgentic(null)
+      }
+
+      const fu = await authFetch(`${API}/voice/followup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transcript: code,
+          question:   currentQ.question,
+          analysis,
+          company:    setup.company,
+          role:       setup.role,
+        }),
+      })
+      setCurrentFollowup(fu)
+      setStage('analysis_result')
+    } catch (e: any) {
+      setError(`Code analysis failed: ${e.message}`)
+      setStage('answering')
+    }
+  }
+
   // ── Step 4: After seeing analysis, proceed to follow-up ──────────────────
   const handleGoToFollowup = () => {
     setFollowupTranscript('')
+    setFollowupAnalysis(null)
     followupRecorder.resetRecording()
     setStage('followup')
+  }
+
+  // Analyse a follow-up answer with the exact same rich evaluation used for
+  // the main question (content/delivery/vocabulary scores, strengths/gaps,
+  // top tip) — previously follow-up answers were transcribed but never
+  // actually analysed at all.
+  const analyzeFollowupAnswer = async (
+    text: string,
+    followupQuestion: string,
+    duration: number,
+    wordCount: number,
+  ): Promise<VoiceAnalysis | null> => {
+    if (!text.trim()) return null
+    setAnalyzingFollowup(true)
+    try {
+      const analysis: VoiceAnalysis = await authFetch(`${API}/voice/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transcript:       text,
+          question:         followupQuestion,
+          question_type:    'follow-up',
+          company:          setup.company,
+          role:             setup.role,
+          duration_seconds: duration,
+          word_count:       wordCount || text.split(/\s+/).filter(Boolean).length,
+        }),
+      })
+      setFollowupAnalysis(analysis)
+      return analysis
+    } catch (e: any) {
+      console.error('Follow-up analysis failed (non-blocking):', e)
+      setFollowupAnalysis(null)
+      return null
+    } finally {
+      setAnalyzingFollowup(false)
+    }
   }
 
   // ── Step 5: Transcribe follow-up audio ───────────────────────────────────
@@ -275,9 +723,20 @@ export default function InterviewPracticePage() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       setFollowupTranscript(data.transcript)
+      setStage('followup')
+
+      // Score this follow-up answer right away, same as the main question —
+      // runs after the transcript is shown so the UI doesn't block on it.
+      if (currentFollowup) {
+        await analyzeFollowupAnswer(
+          data.transcript,
+          currentFollowup.followup,
+          data.duration_seconds ?? 0,
+          data.word_count ?? 0,
+        )
+      }
     } catch (e: any) {
       setError(`Follow-up transcription failed: ${e.message}`)
-    } finally {
       setStage('followup')
     }
   }
@@ -286,28 +745,104 @@ export default function InterviewPracticePage() {
   const handleSubmitFollowup = () => {
     if (!currentAnalysis || !currentFollowup) return
 
-    const pair: QAPair = {
-      question:           currentQ,
-      transcript:         transcript,
-      analysis:           currentAnalysis,
-      followup:           currentFollowup,
-      followupTranscript: followupTranscript || '(skipped)',
+    const finalRound: FollowupRound = {
+      data: currentFollowup,
+      transcript: followupTranscript || '(skipped)',
+      analysis: followupAnalysis,
     }
-    setPairs(prev => [...prev, pair])
+    const pair: QAPair = {
+      question:   currentQ,
+      transcript: transcript,
+      analysis:   currentAnalysis,
+      followups:  [...followupChain, finalRound],
+    }
+    const updatedPairs = [...pairs, pair]
+    setPairs(updatedPairs)
 
     const next = currentIdx + 1
     setTranscript('')
     setCurrentAnalysis(null)
     setCurrentFollowup(null)
+    setCurrentAgentic(null)
     setFollowupTranscript('')
+    setFollowupAnalysis(null)
+    setFollowupChain([])
     recorder.resetRecording()
     followupRecorder.resetRecording()
 
-    if (next < questions.length) {
+    const isLastQuestion = next >= questions.length
+
+    // Feature 2: every answer is persisted server-side BEFORE moving to the
+    // next question — if the user refreshes right now, this Q&A is already saved.
+    if (sessionKey) {
+      saveProgress(sessionKey, isLastQuestion ? 'completed' : 'in_progress', updatedPairs, next)
+    }
+
+    if (!isLastQuestion) {
       setCurrentIdx(next)
       setStage('answering')
     } else {
       setStage('done')
+    }
+  }
+
+  // ── Ask another follow-up round instead of advancing ──────────────────────
+  const handleAskAnotherFollowup = async () => {
+    if (!currentFollowup) return
+
+    const completedRound: FollowupRound = {
+      data: currentFollowup,
+      transcript: followupTranscript || '(skipped)',
+      analysis: followupAnalysis,
+    }
+    const newChain = [...followupChain, completedRound]
+    setFollowupChain(newChain)
+    setError('')
+    setGeneratingNextFollowup(true)
+    try {
+      const fu: FollowupData = await authFetch(`${API}/voice/followup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transcript: completedRound.transcript,
+          question:   completedRound.data.followup,
+          analysis:   currentAnalysis,
+          company:    setup.company,
+          role:       setup.role,
+          previous_followups: newChain.map(r => ({ followup: r.data.followup, answer: r.transcript })),
+        }),
+      })
+      setCurrentFollowup(fu)
+      setFollowupTranscript('')
+      setFollowupAnalysis(null)
+      followupRecorder.resetRecording()
+      setStage('followup')
+    } catch (e: any) {
+      setError(e.message)
+    } finally {
+      setGeneratingNextFollowup(false)
+    }
+  }
+
+  // ── Agentic session comparison (the "reflection" step of the agent loop) ──
+  const handleGenerateSessionComparison = async () => {
+    setError('')
+    setSessionComparisonLoading(true)
+    try {
+      const data: SessionComparison = await authFetch(`${API}/voice/session-comparison`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          all_answers: agenticAnalyses,
+          company:     setup.company,
+          role:        setup.role,
+        }),
+      })
+      setSessionComparison(data)
+    } catch (e: any) {
+      setError(e.message)
+    } finally {
+      setSessionComparisonLoading(false)
     }
   }
 
@@ -317,11 +852,22 @@ export default function InterviewPracticePage() {
     try {
       const fullTranscript = pairs.map((p, i) => {
         let b = `Q${i + 1} [${p.question.type}]: ${p.question.question}\n`
-        b += `A: ${p.transcript}\n`
-        b += `Follow-up: ${p.followup.followup}\n`
-        b += `A: ${p.followupTranscript ?? '(skipped)'}`
+        b += `A: ${p.transcript} (scored ${p.analysis.scores.overall}/10)`
+        p.followups.forEach((round, j) => {
+          b += `\nFollow-up ${j + 1}: ${round.data.followup}\n`
+          b += `A: ${round.transcript}`
+          if (round.analysis) {
+            b += ` (scored ${round.analysis.scores.overall}/10${round.analysis.is_fallback ? ', unverified estimate' : ''})`
+          }
+        })
         return b
       }).join('\n\n---\n\n')
+
+      // Real elapsed time for this session, from when it started (or was
+      // resumed) to right now — replaces the old hardcoded "10 min" estimate.
+      const duration_seconds = sessionStartRef.current
+        ? (Date.now() - sessionStartRef.current) / 1000
+        : undefined
 
       const data = await authFetch(`${API}/interview/feedback`, {
         method: 'POST',
@@ -332,10 +878,14 @@ export default function InterviewPracticePage() {
           role:         setup.role,
           session_type: 'interview',
           title:        `${setup.role} at ${setup.company}`,
+          duration_seconds,
         }),
       })
       setFinalFeedback(data.session?.feedback ?? '')
       setStage('feedback')
+
+      // Interview is fully complete — no need to keep the autosave around.
+      if (sessionKey) await discardProgress(sessionKey)
     } catch (e: any) {
       setError(e.message)
     }
@@ -344,6 +894,8 @@ export default function InterviewPracticePage() {
   const handleReset = () => {
     recorder.resetRecording()
     followupRecorder.resetRecording()
+    if (sessionKey) discardProgress(sessionKey)
+    setSessionKey(null)
     setStage('setup')
     setSetup({ company: '', role: '', jobDescription: '', keySkills: '', resume: null })
     setQuestions([])
@@ -351,6 +903,10 @@ export default function InterviewPracticePage() {
     setTranscript('')
     setCurrentAnalysis(null)
     setCurrentFollowup(null)
+    setFollowupChain([])
+    setCurrentAgentic(null)
+    setAgenticAnalyses([])
+    setSessionComparison(null)
     setFollowupTranscript('')
     setFinalFeedback('')
     setError('')
@@ -393,6 +949,28 @@ export default function InterviewPracticePage() {
           </div>
         )}
 
+        {/* ── RESUME PREVIOUS INTERVIEW (Feature 2) ─────────────────────── */}
+        {stage === 'setup' && resumeAvailable && (
+          <div className="rounded-xl border border-[#2C5AA0]/30 bg-[#2C5AA0]/5 dark:bg-[#2C5AA0]/10 p-5 mb-2 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <RotateCcw className="w-5 h-5 text-[#2C5AA0] mt-0.5 shrink-0" />
+              <div>
+                <p className="font-medium text-[#1F2937] dark:text-white">
+                  You have an unfinished interview
+                </p>
+                <p className="text-sm text-[#6B7280] dark:text-gray-400">
+                  {resumeAvailable.role} at {resumeAvailable.company} — {resumeAvailable.snapshot.pairs.length} of{' '}
+                  {resumeAvailable.snapshot.questions.length} questions answered.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2 shrink-0">
+              <Button variant="outline" onClick={handleDismissResume}>Start Fresh</Button>
+              <Button onClick={handleResumeInterview}>Resume Interview</Button>
+            </div>
+          </div>
+        )}
+
         {/* ── SETUP ──────────────────────────────────────────────────────── */}
         {stage === 'setup' && (
           <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-[#111] p-6 space-y-6">
@@ -404,8 +982,8 @@ export default function InterviewPracticePage() {
                   value={setup.role} onChange={e => setSetup(s => ({ ...s, role: e.target.value }))} />
               </div>
               <div>
-                <Label>Company <span className="text-red-500">*</span></Label>
-                <Input className="mt-1" placeholder="e.g. Google"
+                <Label>Company</Label>
+                <Input className="mt-1" placeholder="e.g. Google (optional)"
                   value={setup.company} onChange={e => setSetup(s => ({ ...s, company: e.target.value }))} />
               </div>
             </div>
@@ -424,8 +1002,10 @@ export default function InterviewPracticePage() {
                 onChange={e => setSetup(s => ({ ...s, keySkills: e.target.value }))} />
             </div>
             <div>
-              <Label>Resume / CV
-                <span className="ml-2 text-xs font-normal text-[#6B7280]">(PDF, DOCX, TXT — recommended)</span>
+              <Label className="inline-flex items-center gap-1">
+                Resume / CV
+                <span className="text-red-500 text-base leading-none">*</span>
+                <span className="ml-1 text-xs font-normal text-[#6B7280]">(PDF, DOCX, TXT — required)</span>
               </Label>
               <div className="mt-2">
                 <input type="file" accept=".pdf,.doc,.docx,.txt" id="resume-input" className="hidden"
@@ -442,16 +1022,43 @@ export default function InterviewPracticePage() {
                 )}
               </div>
             </div>
-            <Button className="w-full" onClick={handleStart}
-              disabled={!setup.company.trim() || !setup.role.trim()}>
-              Generate My Interview Questions <ChevronRight className="w-4 h-4 ml-2" />
-            </Button>
+
+            {/* Explicit opt-in — a coding question only ever appears if the
+                candidate confirms they're comfortable with Python or
+                JavaScript, since that's all the compiler backend supports. */}
+            <div className="rounded-lg border border-gray-200 dark:border-gray-800 p-4 space-y-2 bg-gray-50 dark:bg-gray-900/40">
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 w-4 h-4 accent-indigo-600"
+                  checked={setup.wantsCoding}
+                  onChange={e => setSetup(s => ({ ...s, wantsCoding: e.target.checked }))}
+                />
+                <span className="text-sm text-[#1F2937] dark:text-white">
+                  Include a hands-on coding question in this interview
+                </span>
+              </label>
+              <p className="text-xs text-[#6B7280] dark:text-gray-400 pl-7">
+                Only <strong>Python</strong> and <strong>JavaScript</strong> are supported — if you write and run
+                code in one of those, check this box. If you don't know either, leave this unchecked: for
+                technical/engineering roles you'll still get technical questions, but they'll be spoken/typed
+                explanations (approach, trade-offs, debugging reasoning) — you'll never be asked to write actual
+                code. This only applies to technical/engineering roles either way; other roles are unaffected.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <Button className="flex-1" onClick={handleGenerateQuestions}
+                disabled={!setup.role.trim() || !setup.resume}>
+                Generate My Interview Questions <ChevronRight className="w-4 h-4 ml-2" />
+              </Button>
+            </div>
           </div>
         )}
 
         {/* ── LOADING QUESTIONS ───────────────────────────────────────────── */}
         {stage === 'loading_questions' && (
-          <LoadingCard message="Reading your resume and crafting questions…" sub="The AI is personalising 5 deep questions for you." />
+          <LoadingCard message="Reading your resume and crafting questions…" sub="The AI is personalising 10 deep questions for you." />
         )}
 
         {/* ── ANSWERING ───────────────────────────────────────────────────── */}
@@ -484,26 +1091,40 @@ export default function InterviewPracticePage() {
                 <p className="text-xs text-indigo-700 dark:text-indigo-300">{currentQ.hint}</p>
               </div>
 
-              {/* Voice recorder */}
-              <VoiceRecorderWidget
-                recorder={recorder}
-                onTranscribe={handleTranscribeAnswer}
-                fmtDuration={fmtDuration}
-              />
+              {currentQ.type === 'coding' ? (
+                <CodingAnswerPanel
+                  question={currentQ}
+                  code={code}
+                  setCode={setCode}
+                  onRun={handleRunCode}
+                  onSubmit={handleSubmitCodeAnswer}
+                  runResult={codeRunResult}
+                  running={runningCode}
+                />
+              ) : (
+                <>
+                  {/* Voice recorder */}
+                  <VoiceRecorderWidget
+                    recorder={recorder}
+                    onTranscribe={handleTranscribeAnswer}
+                    fmtDuration={fmtDuration}
+                  />
 
-              {/* Manual transcript fallback */}
-              {recorder.state === 'idle' && (
-                <div className="space-y-1">
-                  <Label className="text-xs text-[#6B7280]">Or type your answer instead</Label>
-                  <Textarea rows={5} placeholder="Type your answer here…"
-                    value={transcript}
-                    onChange={e => setTranscript(e.target.value)} />
-                  {transcript.trim() && (
-                    <Button className="w-full mt-2 gap-2" onClick={() => handleAnalyzeAnswer()}>
-                      <Send className="w-4 h-4" /> Analyse This Answer
-                    </Button>
+                  {/* Manual transcript fallback */}
+                  {recorder.state === 'idle' && (
+                    <div className="space-y-1">
+                      <Label className="text-xs text-[#6B7280]">Or type your answer instead</Label>
+                      <Textarea rows={5} placeholder="Type your answer here…"
+                        value={transcript}
+                        onChange={e => setTranscript(e.target.value)} />
+                      {transcript.trim() && (
+                        <Button className="w-full mt-2 gap-2" onClick={() => handleAnalyzeAnswer()}>
+                          <Send className="w-4 h-4" /> Analyse This Answer
+                        </Button>
+                      )}
+                    </div>
                   )}
-                </div>
+                </>
               )}
             </div>
           </>
@@ -524,16 +1145,54 @@ export default function InterviewPracticePage() {
           <>
             <ProgressBar current={currentIdx} total={questions.length} />
 
-            {/* Transcript review */}
+            {/* Transcript review — for a coding question this shows the
+                submitted code instead of spoken words. */}
             <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-[#111] p-5 space-y-3">
               <div className="flex items-center justify-between">
-                <h3 className="font-semibold text-[#1F2937] dark:text-white text-sm">Your Transcript</h3>
-                <span className="text-xs text-[#6B7280]">{currentAnalysis.metrics.word_count} words · {currentAnalysis.metrics.duration_seconds}s</span>
+                <h3 className="font-semibold text-[#1F2937] dark:text-white text-sm">
+                  {currentQ.type === 'coding' ? 'Your Code' : 'Your Transcript'}
+                </h3>
+                {currentQ.type !== 'coding' && (
+                  <span className="text-xs text-[#6B7280]">{currentAnalysis.metrics.word_count} words · {currentAnalysis.metrics.duration_seconds}s</span>
+                )}
               </div>
-              <p className="text-sm text-[#374151] dark:text-gray-300 bg-gray-50 dark:bg-gray-900 rounded-lg p-3 leading-relaxed">
+              <pre className={`text-sm text-[#374151] dark:text-gray-300 bg-gray-50 dark:bg-gray-900 rounded-lg p-3 leading-relaxed whitespace-pre-wrap ${currentQ.type === 'coding' ? 'font-mono' : ''}`}>
                 {transcript}
-              </p>
+              </pre>
             </div>
+
+            {/* Real pass/fail results from actually running the code —
+                shown here permanently as part of the answer's analysis,
+                same data as the Run Code panel but for the final submission. */}
+            {currentAnalysis.test_summary && (
+              <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-[#111] p-5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-semibold text-[#1F2937] dark:text-white text-sm">Test Results</h3>
+                  <span className={`text-sm font-bold ${SCORE_COLOR(Math.round(10 * currentAnalysis.test_summary.passed / Math.max(1, currentAnalysis.test_summary.total)))}`}>
+                    {currentAnalysis.test_summary.passed}/{currentAnalysis.test_summary.total} passed
+                  </span>
+                </div>
+                {currentAnalysis.test_summary.execution_error && (
+                  <p className="text-xs text-red-600 dark:text-red-400">{currentAnalysis.test_summary.execution_error}</p>
+                )}
+                {(currentAnalysis.test_results || []).map((r, i) => (
+                  <div
+                    key={i}
+                    className={`p-2 rounded-lg text-xs font-mono border space-y-0.5 ${
+                      r.passed
+                        ? 'bg-green-50 dark:bg-green-900/10 border-green-200 dark:border-green-800'
+                        : 'bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800'
+                    }`}
+                  >
+                    <p>Input: {JSON.stringify(r.input)}</p>
+                    <p>Expected: {JSON.stringify(r.expected)}</p>
+                    <p>Got: {r.error ? `Error — ${r.error}` : JSON.stringify(r.actual)}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {currentAnalysis.is_fallback && <FallbackWarning />}
 
             {/* Score cards */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -588,6 +1247,50 @@ export default function InterviewPracticePage() {
               </div>
             </div>
 
+            {/* Agentic pattern insight -- this evaluation had "memory" of every prior answer in this session */}
+            {currentAgentic && (
+              <div className="rounded-xl border border-purple-200 dark:border-purple-800 bg-purple-50/50 dark:bg-purple-900/10 p-5 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Brain className="w-4 h-4 text-purple-600" />
+                  <h3 className="font-semibold text-sm text-[#1F2937] dark:text-white">Agentic Pattern Insight</h3>
+                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ml-auto ${
+                    currentAgentic.pattern_analysis.pattern_trend === 'improving'
+                      ? 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300'
+                      : currentAgentic.pattern_analysis.pattern_trend === 'declining'
+                      ? 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300'
+                      : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'
+                  }`}>
+                    Trend: {currentAgentic.pattern_analysis.pattern_trend}
+                  </span>
+                </div>
+                <p className="text-xs text-[#6B7280] dark:text-gray-400">
+                  Based on all {agenticAnalyses.length} answer{agenticAnalyses.length !== 1 ? 's' : ''} so far in this session
+                </p>
+                {currentAgentic.pattern_analysis.recurring_strength && (
+                  <p className="text-sm text-green-700 dark:text-green-400 flex items-start gap-1">
+                    <CheckCircle2 className="w-3 h-3 mt-1 shrink-0" />
+                    Recurring strength: {currentAgentic.pattern_analysis.recurring_strength}
+                  </p>
+                )}
+                {currentAgentic.pattern_analysis.recurring_gap && (
+                  <p className="text-sm text-orange-700 dark:text-orange-400 flex items-start gap-1">
+                    <TrendingUp className="w-3 h-3 mt-1 shrink-0" />
+                    Recurring gap: {currentAgentic.pattern_analysis.recurring_gap}
+                  </p>
+                )}
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-[#6B7280]">Competency confidence:</span>
+                  <span className={`font-semibold capitalize ${
+                    currentAgentic.competency_alignment.confidence_level === 'strong' ? 'text-green-600' :
+                    currentAgentic.competency_alignment.confidence_level === 'weak' ? 'text-red-500' : 'text-yellow-600'
+                  }`}>{currentAgentic.competency_alignment.confidence_level}</span>
+                </div>
+                <p className="text-xs text-[#374151] dark:text-gray-300 bg-white dark:bg-gray-900 rounded-lg p-2 border border-purple-100 dark:border-purple-900">
+                  <strong>Coaching:</strong> {currentAgentic.coaching.immediate_tip}
+                </p>
+              </div>
+            )}
+
             <Button className="w-full gap-2" onClick={handleGoToFollowup}>
               <MessageSquare className="w-4 h-4" /> Answer the Follow-up Question
             </Button>
@@ -602,7 +1305,9 @@ export default function InterviewPracticePage() {
               <div className="flex items-start gap-3">
                 <MessageSquare className="w-5 h-5 text-indigo-500 mt-0.5 shrink-0" />
                 <div>
-                  <p className="text-xs uppercase tracking-widest text-indigo-500 mb-1">AI Follow-up</p>
+                  <p className="text-xs uppercase tracking-widest text-indigo-500 mb-1">
+                    AI Follow-up {followupChain.length > 0 && `(round ${followupChain.length + 1} of up to ${MAX_FOLLOWUP_ROUNDS})`}
+                  </p>
                   <p className="text-lg font-semibold text-[#1F2937] dark:text-white">
                     {currentFollowup.followup}
                   </p>
@@ -614,7 +1319,9 @@ export default function InterviewPracticePage() {
                 </div>
               </div>
 
-              {stage === 'transcribing_followup' ? (
+              {generatingNextFollowup ? (
+                <LoadingCard message="Preparing the next follow-up…" sub="" />
+              ) : stage === 'transcribing_followup' ? (
                 <LoadingCard message="Transcribing follow-up answer…" sub="" />
               ) : (
                 <>
@@ -631,14 +1338,51 @@ export default function InterviewPracticePage() {
                     </div>
                   )}
 
-                  <div className="flex gap-3">
+                  {/* Follow-up analysis — same rich per-answer evaluation as the
+                      main question, previously missing entirely for follow-ups. */}
+                  {analyzingFollowup ? (
+                    <LoadingCard message="Analysing your follow-up answer…" sub="" />
+                  ) : followupAnalysis ? (
+                    <div className="space-y-3">
+                      {followupAnalysis.is_fallback && <FallbackWarning />}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        {(['overall', 'content', 'delivery', 'vocabulary'] as const).map(k => (
+                          <ScoreCard key={k} label={k} value={followupAnalysis.scores[k]} />
+                        ))}
+                      </div>
+                      <div className="p-3 rounded-lg bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 space-y-1">
+                        <p className="text-xs text-[#6B7280]"><strong>Relevance:</strong> {followupAnalysis.content_analysis.relevance}</p>
+                        {followupAnalysis.content_analysis.key_gaps.length > 0 && (
+                          <p className="text-xs text-orange-600 dark:text-orange-400">
+                            <strong>Gaps:</strong> {followupAnalysis.content_analysis.key_gaps.join(' · ')}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-start gap-2 p-3 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800">
+                        <Award className="w-4 h-4 text-indigo-500 mt-0.5 shrink-0" />
+                        <p className="text-xs text-indigo-700 dark:text-indigo-300">{followupAnalysis.top_tip}</p>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div className="flex flex-wrap gap-3">
                     <Button
                       className="flex-1"
                       onClick={handleSubmitFollowup}
-                      disabled={!followupTranscript && !followupRecorder.audioBlob}
+                      disabled={(!followupTranscript && !followupRecorder.audioBlob) || analyzingFollowup}
                     >
                       {currentIdx + 1 < questions.length ? 'Next Question →' : 'Finish Interview'}
                     </Button>
+                    {followupChain.length + 1 < MAX_FOLLOWUP_ROUNDS && (
+                      <Button
+                        variant="outline"
+                        className="gap-2"
+                        onClick={handleAskAnotherFollowup}
+                        disabled={(!followupTranscript && !followupRecorder.audioBlob) || analyzingFollowup}
+                      >
+                        <MessageSquare className="w-4 h-4" /> Ask Another Follow-up
+                      </Button>
+                    )}
                     <Button variant="ghost" onClick={handleSubmitFollowup} className="text-sm">
                       Skip
                     </Button>
@@ -661,19 +1405,97 @@ export default function InterviewPracticePage() {
               </strong>
             </p>
 
-            {/* Per-question score recap */}
+            {/* Per-question score recap — now also shows each follow-up's
+                own score, previously follow-ups had no score to show at all. */}
             <div className="text-left space-y-2">
-              {pairs.map((p, i) => (
-                <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-800 text-sm">
-                  <span className="text-[#374151] dark:text-gray-300 truncate max-w-xs">
-                    Q{i + 1}: {p.question.question.slice(0, 60)}…
-                  </span>
-                  <span className={`font-bold ml-2 shrink-0 ${SCORE_COLOR(p.analysis.scores.overall)}`}>
-                    {p.analysis.scores.overall}/10
-                  </span>
-                </div>
-              ))}
+              {pairs.map((p, i) => {
+                const scoredFollowups = p.followups.filter(r => r.analysis)
+                return (
+                  <div key={i} className="p-3 rounded-lg bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-800 text-sm space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[#374151] dark:text-gray-300 truncate max-w-xs">
+                        Q{i + 1}: {p.question.question.slice(0, 60)}…
+                      </span>
+                      <span className={`font-bold ml-2 shrink-0 ${SCORE_COLOR(p.analysis.scores.overall)}`}>
+                        {p.analysis.scores.overall}/10
+                      </span>
+                    </div>
+                    {scoredFollowups.map((round, j) => (
+                      <div key={j} className="flex items-center justify-between pl-3 border-l-2 border-indigo-200 dark:border-indigo-800">
+                        <span className="text-xs text-[#6B7280] dark:text-gray-500 truncate max-w-xs">
+                          ↳ Follow-up {j + 1}{round.analysis?.is_fallback ? ' (unverified)' : ''}
+                        </span>
+                        <span className={`text-xs font-semibold ml-2 shrink-0 ${SCORE_COLOR(round.analysis!.scores.overall)}`}>
+                          {round.analysis!.scores.overall}/10
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )
+              })}
             </div>
+
+            {/* Agentic session-level reflection: synthesizes ALL answers together */}
+            {agenticAnalyses.length > 0 && (
+              <div className="text-left">
+                {!sessionComparison ? (
+                  <Button
+                    variant="outline"
+                    className="w-full gap-2"
+                    onClick={handleGenerateSessionComparison}
+                    disabled={sessionComparisonLoading}
+                  >
+                    {sessionComparisonLoading
+                      ? <><Loader2 className="w-4 h-4 animate-spin" /> Synthesising your interview arc…</>
+                      : <><Brain className="w-4 h-4" /> Generate Agentic Performance Report</>}
+                  </Button>
+                ) : (
+                  <div className="rounded-xl border border-purple-200 dark:border-purple-800 bg-purple-50/50 dark:bg-purple-900/10 p-5 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-semibold text-[#1F2937] dark:text-white flex items-center gap-2">
+                        <Brain className="w-4 h-4 text-purple-600" /> Agentic Performance Report
+                      </h3>
+                      <span className={`text-xs font-semibold px-2 py-1 rounded-full capitalize ${
+                        sessionComparison.role_fit === 'strong' ? 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300' :
+                        sessionComparison.role_fit === 'weak' ? 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300' :
+                        'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300'
+                      }`}>
+                        {sessionComparison.role_fit} fit
+                      </span>
+                    </div>
+
+                    <p className="text-sm text-[#374151] dark:text-gray-300">{sessionComparison.interview_arc}</p>
+
+                    <div className="grid sm:grid-cols-2 gap-3">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-green-700 dark:text-green-400 mb-1">Strengths Profile</p>
+                        {sessionComparison.strengths_profile.map((s, i) => (
+                          <p key={i} className="text-xs text-[#374151] dark:text-gray-300 flex items-start gap-1">
+                            <CheckCircle2 className="w-3 h-3 mt-0.5 shrink-0 text-green-600" /> {s}
+                          </p>
+                        ))}
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-orange-700 dark:text-orange-400 mb-1">Growth Areas</p>
+                        {sessionComparison.growth_areas.map((g, i) => (
+                          <p key={i} className="text-xs text-[#374151] dark:text-gray-300 flex items-start gap-1">
+                            <TrendingUp className="w-3 h-3 mt-0.5 shrink-0 text-orange-600" /> {g}
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="p-3 rounded-lg bg-white dark:bg-gray-900 border border-purple-100 dark:border-purple-900">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-purple-600 dark:text-purple-400 mb-1">
+                        Hiring Recommendation
+                      </p>
+                      <p className="text-sm font-semibold text-[#1F2937] dark:text-white">{sessionComparison.hiring_recommendation}</p>
+                      <p className="text-xs text-[#6B7280] dark:text-gray-400 mt-1">{sessionComparison.final_thoughts}</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             <Button className="w-full gap-2" onClick={handleGetFeedback}>
               <Star className="w-4 h-4" /> Get Full AI Feedback Report
@@ -738,6 +1560,112 @@ function ProgressBar({ current, total }: { current: number; total: number }) {
       <div className="h-1.5 w-full rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden">
         <div className="h-full rounded-full bg-indigo-500 transition-all duration-500" style={{ width: `${pct}%` }} />
       </div>
+    </div>
+  )
+}
+
+function CodingAnswerPanel({
+  question, code, setCode, onRun, onSubmit, runResult, running,
+}: {
+  question: Question
+  code: string
+  setCode: (c: string) => void
+  onRun: () => void
+  onSubmit: () => void
+  runResult: {
+    results: { input: any; expected: any; actual: any; passed: boolean; error?: string | null }[]
+    passed_count: number
+    total_count: number
+    all_passed: boolean
+    execution_error: string | null
+  } | null
+  running: boolean
+}) {
+  return (
+    <div className="space-y-3">
+      {question.examples && question.examples.length > 0 && (
+        <div className="p-3 rounded-lg bg-gray-50 dark:bg-gray-900 border border-gray-100 dark:border-gray-800 space-y-1">
+          <p className="text-xs font-semibold text-[#6B7280] uppercase tracking-wide">Example</p>
+          {question.examples.map((ex, i) => (
+            <p key={i} className="text-xs font-mono text-[#374151] dark:text-gray-300">
+              Input: {ex.input} → Output: {ex.output}
+            </p>
+          ))}
+        </div>
+      )}
+
+      <div className="space-y-1">
+        <div className="flex items-center justify-between">
+          <Label className="text-xs text-[#6B7280]">
+            Write your solution ({question.language})
+          </Label>
+          <span className="text-xs text-[#6B7280]">
+            function: <code className="text-[#374151] dark:text-gray-300">{question.function_name}</code>
+          </span>
+        </div>
+        {/* Plain textarea, not a full syntax-highlighting editor — keeps this
+            dependency-free. Monaco/CodeMirror could replace this later if
+            richer editing (syntax highlighting, autocomplete) is wanted. */}
+        <textarea
+          className="w-full rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900 font-mono text-sm p-3 text-[#1F2937] dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          rows={12}
+          spellCheck={false}
+          value={code}
+          onChange={e => setCode(e.target.value)}
+        />
+      </div>
+
+      {/* Real pass/fail from actually running the code — this is the "compiler"
+          the whole feature exists to add. */}
+      {runResult && (
+        <div className="space-y-2">
+          <p className={`text-sm font-semibold ${runResult.all_passed ? 'text-green-600 dark:text-green-400' : 'text-orange-600 dark:text-orange-400'}`}>
+            {runResult.execution_error
+              ? 'Could not run your code'
+              : `${runResult.passed_count}/${runResult.total_count} test cases passed`}
+          </p>
+          {runResult.execution_error && (
+            <p className="text-xs text-red-600 dark:text-red-400">{runResult.execution_error}</p>
+          )}
+          {runResult.results.map((r, i) => (
+            <div
+              key={i}
+              className={`p-2 rounded-lg text-xs font-mono border space-y-0.5 ${
+                r.passed
+                  ? 'bg-green-50 dark:bg-green-900/10 border-green-200 dark:border-green-800'
+                  : 'bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800'
+              }`}
+            >
+              <p>Input: {JSON.stringify(r.input)}</p>
+              <p>Expected: {JSON.stringify(r.expected)}</p>
+              <p>Got: {r.error ? `Error — ${r.error}` : JSON.stringify(r.actual)}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex flex-wrap gap-3">
+        <Button variant="outline" className="gap-2" onClick={onRun} disabled={running || !code.trim()}>
+          {running ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+          Run Code
+        </Button>
+        <Button className="flex-1 gap-2" onClick={onSubmit} disabled={running || !code.trim()}>
+          <Send className="w-4 h-4" /> Submit Solution
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function FallbackWarning() {
+  return (
+    <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+      <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+      <p className="text-xs text-amber-800 dark:text-amber-300">
+        The AI reviewer couldn't be reached for this answer, so the score below is a rough automatic
+        placeholder — it has <strong>not</strong> verified whether your answer was actually correct. Try
+        analysing it again in a moment for a real evaluation.
+      </p>
     </div>
   )
 }

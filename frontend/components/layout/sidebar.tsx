@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import { BarChart3, Settings, Home, BookOpen, MessageCircle, Briefcase, Presentation, FileText, ChevronDown } from 'lucide-react'
+import { BarChart3, Settings, Home, BookOpen, MessageCircle, Briefcase, Presentation, FileText, ChevronDown, BookMarked } from 'lucide-react'
 
 export function Sidebar() {
   const pathname = usePathname()
@@ -61,6 +61,11 @@ export function Sidebar() {
       label: 'Settings',
       href: '/dashboard/settings',
       icon: Settings,
+    },
+    {
+      label: 'My Vocabulary',
+      href: '/dashboard/vocabulary',
+      icon: BookMarked,
     },
   ]
 
