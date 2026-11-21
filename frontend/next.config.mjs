@@ -30,6 +30,9 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+    experimental: {
+    optimizePackageImports: ['recharts', 'lucide-react'],
+  },
   allowedDevOrigins: [
     'localhost',
     '127.0.0.1',

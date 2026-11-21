@@ -89,3 +89,46 @@ def score_to_level(score_0_100: float) -> str:
     if s < 88:
         return "C1"
     return "C2"
+# Per-level guidance on how to WORD generated content (questions, prompts,
+# feedback) — never how hard the underlying subject matter is. A senior
+# engineer can still be an A2 English speaker; this only changes phrasing.
+CEFR_WORDING_GUIDANCE = {
+    "A1": "Use very short sentences and the most common, everyday words. Avoid idioms, "
+          "phrasal verbs, and multi-clause sentences entirely. One simple idea per sentence.",
+    "A2": "Use short, simple sentences and common vocabulary. Avoid idioms and complex "
+          "grammar (e.g. avoid conditionals and passive voice where possible).",
+    "B1": "Use clear, moderately simple sentences. Some field-relevant terminology is fine, "
+          "but avoid dense jargon strings and keep each sentence to one main idea.",
+    "B2": "Normal professional phrasing is fine — this is close to the default tone. You may "
+          "use standard idioms and moderately complex sentence structures.",
+    "C1": "Use natural, fluent professional English, including idiomatic phrasing and "
+          "nuanced, multi-clause sentences where appropriate — as with a native-level speaker.",
+    "C2": "Use sophisticated, idiomatic, native-level professional English freely, including "
+          "nuanced phrasing, subtext, and complex sentences where natural.",
+}
+
+
+def cefr_language_clause(english_level: str | None, subject: str = "question") -> str:
+    """
+    Shared prompt clause used by every AI-generation feature (interview
+    questions, follow-ups, conversation prompts, presentation feedback,
+    voice-answer feedback) to scale generated LANGUAGE to a user's CEFR
+    level, without changing the underlying subject-matter difficulty.
+
+    Returns "" when no level is known, leaving each feature's existing
+    default tone completely unchanged — so this is always safe to splice
+    into a prompt even for users who haven't taken the placement assessment.
+    """
+    if not english_level:
+        return ""
+
+    level = normalize_level(english_level)
+    label = CEFR_LABELS.get(level, "")
+    guidance = CEFR_WORDING_GUIDANCE.get(level, "")
+
+    return (
+        f"- USER'S ENGLISH LEVEL: {level} ({label}). Word every {subject} so its LANGUAGE "
+        f"(not its subject-matter difficulty) matches this level — {guidance} The underlying "
+        f"depth of what's being asked/discussed should NOT be simplified; only the phrasing "
+        f"changes."
+    )

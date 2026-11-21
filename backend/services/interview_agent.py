@@ -5,46 +5,13 @@ import re
 import uuid
 from datetime import datetime, timezone
 
-from utils.cefr import CEFR_LABELS, normalize_level
+from utils.cefr import CEFR_LABELS, normalize_level, cefr_language_clause
 
 
 def _cefr_language_clause(english_level: str | None) -> str:
-    """
-    Builds a RULES-section clause that scales question *wording* (vocabulary,
-    sentence complexity) to the candidate's assessed CEFR English level,
-    without changing the underlying technical/subject-matter difficulty —
-    a candidate can be a senior engineer and still be an A2 English speaker.
-    Returns "" when no level is known, leaving the existing default tone
-    (a normal professional interviewer) completely unchanged.
-    """
-    if not english_level:
-        return ""
-
-    level = normalize_level(english_level)
-    label = CEFR_LABELS.get(level, "")
-
-    guidance = {
-        "A1": "Use very short sentences and the most common, everyday words. Avoid idioms, "
-              "phrasal verbs, and multi-clause sentences entirely. One simple idea per question.",
-        "A2": "Use short, simple sentences and common vocabulary. Avoid idioms and complex "
-              "grammar (e.g. avoid conditionals and passive voice where possible).",
-        "B1": "Use clear, moderately simple sentences. Some job-relevant terminology is fine, "
-              "but avoid dense jargon strings and keep each question to one main idea.",
-        "B2": "Normal professional interview phrasing is fine — this is close to the default "
-              "tone. You may use standard idioms and moderately complex sentence structures.",
-        "C1": "Use natural, fluent professional English, including idiomatic phrasing and "
-              "nuanced, multi-clause questions where appropriate — as with a native-level hire.",
-        "C2": "Use sophisticated, idiomatic, native-level professional English freely, including "
-              "nuanced phrasing, subtext, and complex multi-part questions where natural.",
-    }.get(level, "")
-
-    return (
-        f"- CANDIDATE'S ENGLISH LEVEL: {level} ({label}). Word every question so its LANGUAGE "
-        f"(not its subject-matter difficulty) matches this level — {guidance} The technical "
-        f"depth of what's being asked should still match the role/seniority; only the phrasing "
-        f"changes."
-    )
-
+    """Thin wrapper kept for backward compatibility — the real logic now
+    lives in utils/cefr.py so every feature (not just this one) can share it."""
+    return cefr_language_clause(english_level, subject="question")
 
 QUESTION_TYPES = [
     "behavioral",
@@ -534,7 +501,8 @@ def build_followup_prompt(
     previous_pairs=None,
     resume_context="",
     company: str = "",
-    role: str = ""
+    role: str = "",
+    english_level: str | None = None,
 ):
     system = (
         "You are an expert interviewer. Your task is to generate a single, sharp follow-up "
@@ -550,6 +518,7 @@ def build_followup_prompt(
             prior_rounds_block += f"\nFollow-up {i}: {prior_question}\nCandidate's answer: {prior_answer}\n"
 
     avoid_repeat_clause = " that has not already been covered above" if previous_pairs else ""
+    language_level_clause = cefr_language_clause(english_level, subject="follow-up question")
 
     user = f"""
 INTERVIEW CONTEXT:
@@ -562,6 +531,7 @@ CANDIDATE ANSWER: \"\"\"{candidate_answer}\"\"\"
 
 Task:
 Generate ONE sharp, incisive follow-up question that probes for more detail{avoid_repeat_clause}.
+{language_level_clause}
 Return valid JSON only:
 {{
   "followup": "the follow-up question text",

@@ -16,6 +16,7 @@ import re
 import tempfile
 from pathlib import Path
 from utils.jwt_handler import token_required
+from models import User
 from services.voice_service import (
     transcribe_audio,
     analyze_voice_answer,
@@ -27,6 +28,13 @@ from services.agentic_analysis import (
 )
 
 voice_bp = Blueprint("voice", __name__)
+
+
+def _get_english_level(user_id: int) -> str | None:
+    """Shared helper: fetch the user's assessed CEFR level, if any, so every
+    AI-generation call in this file can scale its wording to it."""
+    user = User.query.get(user_id)
+    return user.english_level if user else None
 
 UPLOAD_DIR   = "uploads/audio"
 MAX_FILE_MB  = 25   # Whisper limit is 25 MB
@@ -159,6 +167,7 @@ def analyze(payload):
             role             = role,
             duration_seconds = duration_seconds,
             word_count       = word_count,
+            english_level    = _get_english_level(payload["user_id"]),
         )
 
         return jsonify(analysis), 200
@@ -319,6 +328,7 @@ def voice_followup(payload):
             company             = company,
             role                = role,
             previous_followups  = previous_followups,
+            english_level       = _get_english_level(payload["user_id"]),
         )
 
         return jsonify(result), 200

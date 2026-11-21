@@ -16,10 +16,10 @@ guess whether it's correct.
 
 from flask import Blueprint, request, jsonify
 from utils.jwt_handler import token_required
+from models import User
 from services.code_execution_service import run_test_cases, analyze_code_submission
 
 code_interview_bp = Blueprint("code_interview", __name__)
-
 
 @code_interview_bp.route("/run", methods=["POST"])
 @token_required
@@ -105,6 +105,7 @@ def analyze_code(payload):
             test_cases=test_cases,
         )
 
+        user = User.query.get(payload["user_id"])
         analysis = analyze_code_submission(
             code=code,
             language=language,
@@ -113,6 +114,7 @@ def analyze_code(payload):
             company=company,
             role=role,
             test_execution=test_execution,
+            english_level=user.english_level if user else None,
         )
         return jsonify(analysis), 200
 

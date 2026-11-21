@@ -1,191 +1,472 @@
 ﻿'use client'
 
-import { useEffect, useState } from 'react'
-import Link from 'next/link'
-import { Briefcase, Presentation, MessageCircle, Book, TrendingUp, Target, Trophy, X, Info } from 'lucide-react'
-import { PracticeModeCard } from '@/components/practice-mode-card'
-import { getUser, getToken, setAuth } from '@/lib/auth'
-import { getLevelProgress, markLevelChangesSeen, type LevelProgress } from '@/lib/api'
+import { Suspense } from 'react'
+import { useSearchParams } from 'next/navigation'
+import { Header } from '@/components/layout/header'
+import { Sidebar } from '@/components/layout/sidebar'
+import { Button } from '@/components/ui/button'
+import {
+  Briefcase,
+  Presentation,
+  MessageCircle,
+  BookOpen,
+  Zap,
+  TrendingUp,
+  Flag,
+  UserCheck,
+  ListChecks,
+  Mic2,
+  Layers,
+  MessageSquare,
+  BarChart3,
+  Heart,
+  Code2,
+  GraduationCap,
+  Mail,
+  Building2,
+} from 'lucide-react'
 
-const CEFR_LABELS: Record<string, string> = {
-  A1: 'Beginner', A2: 'Elementary', B1: 'Intermediate',
-  B2: 'Upper Intermediate', C1: 'Advanced', C2: 'Proficient',
-}
+function AboutInner() {
+  // /about -> overview, /about?section=cefr -> only the CEFR section, etc.
+  // The sidebar's "About" group links to these URLs.
+  const searchParams = useSearchParams()
+  const requested = searchParams.get('section') ?? 'overview'
+  const validSections = ['overview', 'problem-solution', 'features', 'how-it-works', 'cefr', 'vision', 'authors']
+  const activeSection = validSections.includes(requested) ? requested : 'overview'
+  const isActive = (id: string) => activeSection === id
 
-export default function DashboardPage() {
-  const user = getUser()
-
-  // Automatic level progression: the backend promotes the user's CEFR level
-  // as their mock-session scores justify it. Here we (1) show how close they
-  // are to the next level, (2) show a dismissible banner after a promotion,
-  // and (3) refresh the level cached in sessionStorage so every page that
-  // reads getUser().english_level picks up the new value.
-  const [progress, setProgress] = useState<LevelProgress | null>(null)
-  const [levelOverride, setLevelOverride] = useState<string | null>(null)
-  const [showBanner, setShowBanner] = useState(true)
-
-  useEffect(() => {
-    let cancelled = false
-    getLevelProgress()
-      .then(p => {
-        if (cancelled) return
-        setProgress(p)
-        if (p.current_level) {
-          setLevelOverride(p.current_level)
-          const token = getToken()
-          const stored = getUser()
-          if (token && stored && stored.english_level !== p.current_level) {
-            setAuth(token, { ...stored, english_level: p.current_level })
-          }
-        }
-      })
-      .catch(() => { /* non-blocking — the dashboard works fine without it */ })
-    return () => { cancelled = true }
-  }, [])
-
-  const displayLevel = levelOverride ?? user?.english_level ?? null
-  const latestPromotion = progress?.unseen?.[0]
-
-  const dismissBanner = () => {
-    setShowBanner(false)
-    markLevelChangesSeen().catch(() => {})
-  }
-
-  const practiceModes = [
+  const features = [
     {
-      title: 'Agentic Interview',
-      description: 'Run company-specific, multi-round interview simulations with real-time scoring.',
-      icon: Briefcase,
-      href: '/practice/interview',
-      color: 'primary',
+      icon: <Briefcase className="w-8 h-8 text-sky-500" />,
+      title: 'Interview Practice',
+      description:
+        'Mock interview sessions with AI-generated questions, voice recording, and structured feedback on your responses.',
+      novelty:
+        'Questions are generated fresh per session from your resume, the job description, and the target company — not a fixed question bank. Follow-up questions probe your actual answer, and each follow-up is scored with the same rigor as the main question.',
     },
     {
-      title: 'Presentation Mode',
-      description: 'Deliver presentations and receive feedback on delivery and content.',
-      icon: Presentation,
-      href: '/practice/presentation',
-      color: 'success',
+      icon: <Code2 className="w-8 h-8 text-indigo-500" />,
+      title: 'Real Coding Rounds',
+      description:
+        'Optional hands-on coding questions for technical roles — written and run in Python or JavaScript, not just talked about.',
+      novelty:
+        "Submitted code is executed against real test cases by an actual interpreter, so correctness is a fact from execution, never an AI's guess. The candidate opts in explicitly, and if they don't know Python/JavaScript, no coding question is ever generated — questions stay purely conversational instead.",
     },
     {
-      title: 'Conversation Practice',
-      description: 'Sharpen fluency and expressive communication for interviews and networking.',
-      icon: MessageCircle,
-      href: '/practice/conversation',
-      color: 'warning',
+      icon: <Presentation className="w-8 h-8 text-violet-500" />,
+      title: 'Presentation Training',
+      description:
+        'Practice slide-based delivery and receive guidance on clarity, pacing, and presentation structure.',
+      novelty:
+        'Feedback is tied to the specific slide you were presenting, not a generic rubric — so notes reference what you actually said for that slide, in that moment.',
     },
     {
+      icon: <MessageCircle className="w-8 h-8 text-emerald-500" />,
+      title: 'Casual Conversation',
+      description:
+        'Build speaking fluency through informal dialogue practice, topic prompts, and AI conversation responses.',
+      novelty:
+        'A single spoken response is broken down into a full report — vocabulary, grammar, pronunciation, and fluency — instead of one flat score, so you know exactly which part of your English to work on next.',
+    },
+    {
+      icon: <BookOpen className="w-8 h-8 text-orange-500" />,
       title: 'Reading Practice',
-      description: 'Improve comprehension and technical reading depth for interview preparation.',
-      icon: Book,
-      href: '/practice/reading',
-      color: 'danger',
+      description:
+        'Read passages aloud, compare your transcript with source text, and improve pronunciation and intonation.',
+      novelty:
+        'Passages are generated at your assessed CEFR level and topic difficulty, never repeating recent ones, and a "TV News Anchor" mode adds teleprompter-style delivery practice on top of plain reading.',
+    },
+    {
+      icon: <Zap className="w-8 h-8 text-amber-500" />,
+      title: 'AI Feedback & Analysis',
+      description:
+        'The backend analyzes responses and returns actionable feedback on vocabulary, delivery, grammar, and relevance.',
+      novelty:
+        'When the AI reviewer is genuinely unavailable, the system never silently hands you a made-up "good" score — it falls back to an honest, clearly-labelled estimate so you always know whether a score is a real evaluation or a placeholder.',
+    },
+    {
+      icon: <TrendingUp className="w-8 h-8 text-cyan-500" />,
+      title: 'Progress Tracking',
+      description:
+        'Review session history, feedback notes, and performance trends on the dashboard to see improvement over time.',
+      novelty:
+        'Every past session\'s full AI feedback is stored and viewable in full, not just summarized — so you can compare exactly what changed between an old session and a recent one.',
+    },
+    {
+      icon: <GraduationCap className="w-8 h-8 text-pink-500" />,
+      title: 'Adaptive CEFR Leveling',
+      description:
+        'Your English level (A1–C2) is assessed once, then automatically raised as your real practice performance justifies it.',
+      novelty:
+        'No separate re-test is required — consistently strong performance across multiple practice modes and multiple days automatically raises your level and unlocks harder content, with the platform notifying you when it happens. Levels only ever move up automatically, keeping placement honest.',
+    },
+    {
+      icon: <Flag className="w-8 h-8 text-rose-500" />,
+      title: 'Goal Setting',
+      description:
+        'Define learning goals and focus on specific practice areas to make progress more intentional.',
+      novelty:
+        'Goals track automatically against real session activity — completing a relevant practice session updates progress without any manual check-in.',
+    },
+    {
+      icon: <UserCheck className="w-8 h-8 text-lime-500" />,
+      title: 'Personalized Learning',
+      description:
+        'Choose the practice paths that matter most to you and receive feedback that supports your speaking goals.',
+      novelty:
+        'The language used in questions and feedback itself scales to your CEFR level — an A2 learner and a C1 learner preparing for the same role are asked the same substance in different words.',
     },
   ]
 
+  const workSteps = [
+    {
+      icon: <ListChecks className="w-8 h-8 text-sky-500" />,
+      title: 'Choose Practice Mode',
+      description: 'Select interview, presentation, conversation, or reading practice from the dashboard.',
+    },
+    {
+      icon: <Mic2 className="w-8 h-8 text-emerald-500" />,
+      title: 'Respond by Speaking or Typing',
+      description: 'Record your answer or submit a typed response inside the practice session.',
+    },
+    {
+      icon: <Layers className="w-8 h-8 text-violet-500" />,
+      title: 'AI Analyzes Responses',
+      description: 'Server-side feedback routes evaluate your transcript and identify strengths and improvement areas.',
+    },
+    {
+      icon: <MessageSquare className="w-8 h-8 text-orange-500" />,
+      title: 'Receive Feedback',
+      description: 'Review detailed notes on vocabulary, fluency, pronunciation, grammar, and structure.',
+    },
+    {
+      icon: <BarChart3 className="w-8 h-8 text-cyan-500" />,
+      title: 'Track Improvement',
+      description: 'Use the dashboard to monitor your learning journey and revisit practice sessions over time.',
+    },
+  ]
+
+  const cefrLevels = [
+    {
+      code: 'A1',
+      label: 'Beginner',
+      description:
+        'Can understand and use very basic everyday expressions and simple phrases. Can introduce themselves and answer simple personal questions with help from the listener.',
+    },
+    {
+      code: 'A2',
+      label: 'Elementary',
+      description:
+        'Can communicate in simple, routine situations involving direct exchange of familiar information — shopping, local area, immediate needs — using short, simple sentences.',
+    },
+    {
+      code: 'B1',
+      label: 'Intermediate',
+      description:
+        'Can handle most everyday situations while travelling or working, describe experiences and opinions, and give reasons and explanations for plans in simple connected text.',
+    },
+    {
+      code: 'B2',
+      label: 'Upper Intermediate',
+      description:
+        'Can interact with fluency and spontaneity that makes regular interaction with native speakers possible, and can produce clear, detailed text on a wide range of subjects.',
+    },
+    {
+      code: 'C1',
+      label: 'Advanced',
+      description:
+        'Can express ideas fluently and spontaneously without obvious searching for words, and use language flexibly for social, academic, and professional purposes.',
+    },
+    {
+      code: 'C2',
+      label: 'Proficient',
+      description:
+        'Can understand virtually everything read or heard, summarize information from different sources, and express themselves spontaneously with precision even in complex situations.',
+    },
+  ]
+
+  const authors = [
+    { name: 'Ishal Anisha Pereira', email: 'ishalpereira12@gmail.com' },
+    { name: 'Jenisha Nazareth', email: 'jenishanazareth99@gmail.com' },
+    { name: 'Lavisha Priya D Almeida', email: 'lavishapriyadalmeida@gmail.com' },
+    { name: 'Meloni Jonita Quadras', email: 'meloniqrs@gmail.com' },
+  ]
+
+  const guide = { name: 'Dr. Sridevi Saralaya', email: 'sridevis@sjec.ac.in' }
+
+  const affiliation = {
+    department: 'Department of Computer Science and Engineering',
+    institution: 'St. Joseph Engineering College',
+    location: 'Mangaluru, India',
+  }
+
   return (
-    <div className="space-y-8">
-      <div>
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
-          <h1 className="text-4xl font-bold text-[#1F2937] dark:text-white">
-            LexiFeed Interview Command Center
-          </h1>
-          {displayLevel && (
-            <Link
-              href="/dashboard/settings"
-              className="flex items-center gap-2 rounded-full border border-[#2C5AA0]/30 bg-[#2C5AA0]/10 px-4 py-1.5 text-sm font-medium text-[#2C5AA0] hover:bg-[#2C5AA0]/20 transition"
-              title="Every practice mode is tailored to this level. Click to retake the assessment."
-            >
-              English Level: {displayLevel} · {CEFR_LABELS[displayLevel] ?? ''}
-            </Link>
-          )}
-        </div>
-        <p className="text-[#6B7280] dark:text-gray-400 text-lg">
-          Prepare for Google, Microsoft, Amazon, Meta, and beyond with AI-generated reports and coaching.
-        </p>
-      </div>
+    <div className="flex h-screen overflow-hidden app-bg">
+      <Sidebar />
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <Header />
 
-      {/* Promotion banner — shown until the user dismisses it */}
-      {latestPromotion && showBanner && (
-        <div className="flex items-start gap-3 rounded-xl border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20 p-4">
-          <Trophy className="w-6 h-6 text-green-600 dark:text-green-400 shrink-0 mt-0.5" />
-          <div className="flex-1">
-            <p className="font-semibold text-green-800 dark:text-green-300">
-              You've levelled up: {latestPromotion.from_level} → {latestPromotion.to_level}
-              {' '}({CEFR_LABELS[latestPromotion.to_level] ?? ''})
-            </p>
-            <p className="text-sm text-green-700 dark:text-green-400 mt-0.5">
-              {latestPromotion.reason} Your reading passages and interview questions will now be a bit more challenging.
-            </p>
-          </div>
-          <button onClick={dismissBanner} aria-label="Dismiss" className="text-green-700 dark:text-green-400 hover:opacity-70">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-      )}
+        <main className="flex-1 overflow-auto p-6 lg:p-8">
+          <div className="max-w-6xl mx-auto space-y-12">
+            {isActive('overview') && (
+            <section className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#111827] p-10">
+              <div className="grid gap-10 lg:grid-cols-[1.2fr_0.8fr] lg:items-center">
+                <div>
+                  <p className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">
+                    About Lexical
+                  </p>
+                  <h1 className="mt-4 text-4xl font-bold tracking-tight text-slate-950 dark:text-white sm:text-5xl">
+                    AI-powered practice for spoken English, interviews, presentations, conversations, and reading.
+                  </h1>
+                  <p className="mt-6 text-lg leading-8 text-slate-600 dark:text-slate-300">
+                    Lexical is a student-focused English communication platform that combines targeted practice modes with AI feedback.
+                    Learners can practice real speaking tasks, receive personalized analysis, and build confidence through measurable progress.
+                  </p>
+                  <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
+                    <Button asChild>
+                      <a href="/dashboard" className="w-full text-center sm:w-auto">
+                        Start practicing
+                      </a>
+                    </Button>
+                    <Button variant="outline" asChild>
+                      <a href="/dashboard/feedback" className="w-full text-center sm:w-auto">
+                        See feedback dashboard
+                      </a>
+                    </Button>
+                  </div>
+                </div>
 
-      {/* Progress toward the next CEFR level */}
-      {progress?.next_level && progress.sessions_needed !== undefined && (
-        <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/70 p-4 space-y-2">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">
-              Progress to {progress.next_level} ({CEFR_LABELS[progress.next_level] ?? ''})
-            </p>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              {progress.sessions_counted}/{progress.sessions_needed} scored sessions
-            </p>
-          </div>
-          <div className="h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
-            <div
-              className="h-full bg-[#2C5AA0] transition-all"
-              style={{ width: `${Math.min(100, ((progress.sessions_counted ?? 0) / (progress.sessions_needed || 1)) * 100)}%` }}
-            />
-          </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            To level up: average {progress.avg_score_needed}+/10 over {progress.sessions_needed} sessions
-            (now {progress.avg_score}), across {progress.modes_needed}+ practice modes
-            (now {progress.distinct_modes}) on {progress.days_needed}+ different days (now {progress.distinct_days})
-            {progress.cooldown_days_left ? ` · next promotion possible in ${progress.cooldown_days_left} day(s)` : ''}.
-          </p>
-        </div>
-      )}
+                <div className="rounded-3xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111827] p-8 shadow-sm">
+                  <p className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">
+                    Why learners choose Lexical
+                  </p>
+                  <ul className="mt-6 space-y-4 text-slate-700 dark:text-slate-300">
+                    <li className="rounded-2xl bg-slate-50 dark:bg-slate-900 p-4">
+                      <p className="font-semibold">Focused speaking practice</p>
+                      <p className="text-sm text-slate-600 dark:text-slate-400">
+                        Practice with mode-specific exercises designed for real English speaking scenarios.
+                      </p>
+                    </li>
+                    <li className="rounded-2xl bg-slate-50 dark:bg-slate-900 p-4">
+                      <p className="font-semibold">Personalized feedback</p>
+                      <p className="text-sm text-slate-600 dark:text-slate-400">
+                        Receive feedback that targets vocabulary, delivery, pronunciation, and communication clarity.
+                      </p>
+                    </li>
+                    <li className="rounded-2xl bg-slate-50 dark:bg-slate-900 p-4">
+                      <p className="font-semibold">Progress tracking</p>
+                      <p className="text-sm text-slate-600 dark:text-slate-400">
+                        Track your sessions, review past feedback, and stay on course with learning goals.
+                      </p>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </section>
+            )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {practiceModes.map((mode) => (
-          <PracticeModeCard key={mode.title} {...mode} />
-        ))}
-      </div>
+            {isActive('problem-solution') && (
+            <section className="grid gap-6 md:grid-cols-2">
+              <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] p-8">
+                <h2 className="text-2xl font-semibold text-slate-950 dark:text-white">Problem We Solve</h2>
+                <p className="mt-4 text-slate-600 dark:text-slate-300 leading-7">
+                  Many learners struggle with limited speaking practice, unclear vocabulary choices, interview anxiety,
+                  and a lack of structured feedback. Lexical offers a practical way to practice real English and get focused improvement guidance.
+                </p>
+                <div className="mt-6 space-y-4">
+                  {[
+                    'Limited vocabulary and phrase variety in spoken English.',
+                    'Difficulty finding realistic speaking practice.',
+                    'Interview and presentation anxiety without feedback.',
+                    'No clear path for tracking spoken language progress.',
+                  ].map((item) => (
+                    <div key={item} className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 p-4 text-slate-700 dark:text-slate-300">
+                      {item}
+                    </div>
+                  ))}
+                </div>
+              </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <Link href="/dashboard/progress" className="block">
-          <div className="bg-linear-to-br from-blue-50 to-blue-100 dark:from-blue-900/20 dark:to-blue-800/10 rounded-lg p-6 border border-blue-200 dark:border-blue-800 hover:shadow-lg transition-shadow cursor-pointer">
-            <div className="flex items-center gap-3 mb-2">
-              <TrendingUp className="w-6 h-6 text-blue-600" />
-              <h3 className="font-semibold text-lg text-[#1F2937] dark:text-white">📊 Analytics</h3>
-            </div>
-            <p className="text-[#6B7280] dark:text-gray-400">Track score trends, skills growth, and interview momentum.</p>
-          </div>
-        </Link>
+              <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] p-8">
+                <h2 className="text-2xl font-semibold text-slate-950 dark:text-white">Our Solution</h2>
+                <p className="mt-4 text-slate-600 dark:text-slate-300 leading-7">
+                  Lexical provides practice modes, AI-assisted feedback, and progress tracking so learners can practice purposefully
+                  and grow speaking confidence across interviews, presentations, conversations, and reading exercises.
+                </p>
+                <div className="mt-6 grid gap-4">
+                  {[
+                    'Interview Practice with mock questions and answer analysis.',
+                    'Presentation Practice for delivery and structure feedback.',
+                    'Casual Conversation Practice for natural speaking fluency.',
+                    'Reading Practice to improve pronunciation and comprehension.',
+                    'AI analysis of responses with actionable feedback.',
+                    'Progress insights and goal-based learning pathways.',
+                  ].map((item) => (
+                    <div key={item} className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 p-4 text-slate-700 dark:text-slate-300">
+                      {item}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+            )}
 
-        <Link href="/dashboard/goals" className="block">
-          <div className="bg-linear-to-br from-green-50 to-green-100 dark:from-green-900/20 dark:to-green-800/10 rounded-lg p-6 border border-green-200 dark:border-green-800 hover:shadow-lg transition-shadow cursor-pointer">
-            <div className="flex items-center gap-3 mb-2">
-              <Target className="w-6 h-6 text-green-600" />
-              <h3 className="font-semibold text-lg text-[#1F2937] dark:text-white">🎯 Goals</h3>
-            </div>
-            <p className="text-[#6B7280] dark:text-gray-400">Prioritize weak topics and turn feedback into measurable progress.</p>
-          </div>
-        </Link>
+            {isActive('features') && (
+            <section className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#111827] p-8">
+              <h2 className="text-3xl font-semibold text-slate-950 dark:text-white text-center mb-8">Key Features</h2>
+              <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
+                {features.map((feature) => (
+                  <div key={feature.title} className="rounded-3xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111827] p-6 shadow-sm flex flex-col">
+                    <div className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 dark:bg-slate-900">
+                      {feature.icon}
+                    </div>
+                    <h3 className="text-xl font-semibold text-slate-950 dark:text-white mb-2">{feature.title}</h3>
+                    <p className="text-slate-600 dark:text-slate-300 leading-7">{feature.description}</p>
+                    <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-indigo-500 dark:text-indigo-400 mb-1">
+                        What&apos;s novel
+                      </p>
+                      <p className="text-sm text-slate-500 dark:text-slate-400 leading-6">{feature.novelty}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+            )}
 
-        <Link href="/about" className="block">
-          <div className="bg-linear-to-br from-orange-50 to-orange-100 dark:from-orange-900/20 dark:to-orange-800/10 rounded-lg p-6 border border-orange-200 dark:border-orange-800 hover:shadow-lg transition-shadow cursor-pointer">
-            <div className="flex items-center gap-3 mb-2">
-              <Info className="w-6 h-6 text-orange-600" />
-              <h3 className="font-semibold text-lg text-[#1F2937] dark:text-white">ℹ️ About Lexical</h3>
-            </div>
-            <p className="text-[#6B7280] dark:text-gray-400">Learn what Lexical does, how CEFR levels work, and who built it.</p>
+            {isActive('how-it-works') && (
+            <section className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] p-8">
+              <h2 className="text-3xl font-semibold text-slate-950 dark:text-white text-center mb-8">How It Works</h2>
+              <div className="grid gap-6 md:grid-cols-5">
+                {workSteps.map((step) => (
+                  <div key={step.title} className="rounded-3xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#111827] p-6 text-center">
+                    <div className="mx-auto mb-4 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-white dark:bg-slate-900 shadow-sm">
+                      {step.icon}
+                    </div>
+                    <h3 className="text-lg font-semibold text-slate-950 dark:text-white mb-2">{step.title}</h3>
+                    <p className="text-slate-600 dark:text-slate-300 text-sm leading-relaxed">{step.description}</p>
+                  </div>
+                ))}
+              </div>
+            </section>
+            )}
+
+            {isActive('cefr') && (
+            <section className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#111827] p-8">
+              <div className="text-center max-w-3xl mx-auto">
+                <h2 className="text-3xl font-semibold text-slate-950 dark:text-white">Your English Level: CEFR</h2>
+                <p className="mt-4 text-slate-600 dark:text-slate-300 leading-7">
+                  Lexical measures your spoken English using the CEFR (Common European Framework of Reference for
+                  Languages) — the same six-level scale used internationally for language proficiency, from A1
+                  (Beginner) to C2 (Proficient). A short placement assessment sets your starting level, and every
+                  practice mode — reading passages, interview question wording, feedback language — automatically
+                  adjusts to match it.
+                </p>
+              </div>
+              <div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                {cefrLevels.map((level) => (
+                  <div key={level.code} className="rounded-3xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111827] p-6">
+                    <div className="flex items-center gap-3 mb-3">
+                      <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-[#2C5AA0] text-white font-bold text-sm">
+                        {level.code}
+                      </span>
+                      <h3 className="text-lg font-semibold text-slate-950 dark:text-white">{level.label}</h3>
+                    </div>
+                    <p className="text-sm text-slate-600 dark:text-slate-300 leading-6">{level.description}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-8 rounded-3xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-900/20 p-6 text-center">
+                <p className="text-slate-700 dark:text-slate-200 font-semibold">
+                  You don&apos;t need to retake the assessment to level up.
+                </p>
+                <p className="mt-2 text-sm text-slate-600 dark:text-slate-300 leading-6">
+                  As you complete mock sessions and consistently perform well across different practice modes and
+                  different days, Lexical automatically raises your CEFR level and lets you know — so simply
+                  practicing regularly, and doing well, is what moves you forward.
+                </p>
+              </div>
+            </section>
+            )}
+
+            {isActive('vision') && (
+            <section className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-linear-to-r from-slate-50 to-slate-100 dark:from-slate-900/40 dark:to-slate-800/20 p-10">
+              <div className="max-w-4xl mx-auto text-center">
+                <div className="inline-flex items-center justify-center rounded-3xl bg-slate-900/5 px-4 py-2 text-sm font-semibold uppercase tracking-[0.24em] text-slate-700 dark:text-slate-200">
+                  <Heart className="mr-2 h-4 w-4 text-rose-500" />
+                  Project Vision
+                </div>
+                <h2 className="mt-6 text-3xl font-semibold text-slate-950 dark:text-white">A platform for confident English communication</h2>
+                <p className="mt-4 text-slate-600 dark:text-slate-300 leading-8">
+                  Lexical helps learners practice speaking in real-world scenarios, reduce communication anxiety, and make English practice
+                  more consistent by combining intelligent feedback with accessible full-stack tools.
+                </p>
+                <div className="mt-8 grid gap-4 md:grid-cols-3">
+                  {[
+                    'Improve communication skills for interviews, presentations, and everyday conversation.',
+                    'Build confidence through structured practice and thoughtful AI guidance.',
+                    'Make English practice accessible with personalized learning pathways and progress monitoring.',
+                  ].map((item) => (
+                    <div key={item} className="rounded-3xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111827] p-6 text-slate-600 dark:text-slate-300">
+                      {item}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+            )}
+
+            {isActive('authors') && (
+            <section className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] p-8">
+              <h2 className="text-3xl font-semibold text-slate-950 dark:text-white text-center mb-2">Authors</h2>
+              <p className="text-center text-slate-500 dark:text-slate-400 mb-8">
+                {affiliation.department} · {affiliation.institution} · {affiliation.location}
+              </p>
+              <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
+                {authors.map((author) => (
+                  <div key={author.email} className="rounded-3xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#111827] p-6 text-center">
+                    <div className="mx-auto mb-4 inline-flex h-14 w-14 items-center justify-center rounded-full bg-white dark:bg-slate-900 shadow-sm">
+                      <GraduationCap className="w-7 h-7 text-sky-500" />
+                    </div>
+                    <h3 className="text-lg font-semibold text-slate-950 dark:text-white">{author.name}</h3>
+                    <p className="mt-2 flex items-center justify-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+                      <Building2 className="w-3.5 h-3.5" /> {affiliation.institution}
+                    </p>
+                    <p className="mt-1 flex items-center justify-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 break-all">
+                      <Mail className="w-3.5 h-3.5 shrink-0" /> {author.email}
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-8 rounded-3xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#111827] p-6 max-w-md mx-auto text-center">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-3">
+                  Guided by
+                </p>
+                <div className="mx-auto mb-3 inline-flex h-14 w-14 items-center justify-center rounded-full bg-white dark:bg-slate-900 shadow-sm">
+                  <UserCheck className="w-7 h-7 text-emerald-500" />
+                </div>
+                <h3 className="text-lg font-semibold text-slate-950 dark:text-white">{guide.name}</h3>
+                <p className="mt-2 flex items-center justify-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+                  <Building2 className="w-3.5 h-3.5" /> {affiliation.institution}
+                </p>
+                <p className="mt-1 flex items-center justify-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 break-all">
+                  <Mail className="w-3.5 h-3.5 shrink-0" /> {guide.email}
+                </p>
+              </div>
+            </section>
+            )}
           </div>
-        </Link>
+        </main>
       </div>
     </div>
+  )
+}
+
+export default function AboutPage() {
+  return (
+    <Suspense fallback={null}>
+      <AboutInner />
+    </Suspense>
   )
 }

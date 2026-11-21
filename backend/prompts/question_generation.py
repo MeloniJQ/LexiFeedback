@@ -1,5 +1,5 @@
 from typing import Any
-
+from utils.cefr import cefr_language_clause
 QUESTION_TEMPLATE = {
     "id": "string",
     "question": "string",
@@ -21,6 +21,7 @@ def build_question_generation_prompt(
     company: str | None = None,
     role: str | None = None,
     include_coding: bool = False,
+    english_level: str | None = None,
 ) -> tuple[str, str]:
     profile_data = candidate_profile.profile_data or {}
     resume = profile_data.get("resume", {})
@@ -33,6 +34,7 @@ def build_question_generation_prompt(
     # any guess from resume/JD text — those are frequently missing or stale.
     role = (role or blueprint.get("role") or resume.get("role") or jd.get("role") or "").strip() or "the target role"
     company = (company or blueprint.get("company") or "").strip() or "the target company"
+    language_level_clause = cefr_language_clause(english_level, subject="question")
 
     # This is the user's explicit choice from the setup screen — the ONLY
     # supported languages for a real coding question are Python and
@@ -113,6 +115,7 @@ Rules:
 7. Keep questions realistic, professional, and follow-up worthy.
 8. Question 1 MUST be a warm, open-ended opener equivalent to "Tell me about yourself and why you're interested in this role at {company}", tagged "difficulty": "Easy" and "category": "Behavioral".
 9. Order the remaining questions so difficulty rises gradually: start with "Easy" questions, move through "Medium", and place the hardest "Hard" questions near the end. Never front-load a hard question.
+{language_level_clause}
 {coding_clause}
 Output format:
 [
