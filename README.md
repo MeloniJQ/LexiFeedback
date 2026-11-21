@@ -51,6 +51,21 @@ LexiFeed is a full-stack web application that helps users practice English inter
 ## Project Structure
 
 LexiFeed/
++-- backend/
+�   +-- app.py
+�   +-- config.py
+�   +-- requirements.txt
+�   +-- models/
+�   +-- routes/
+�   +-- services/
+�   +-- utils/
++-- frontend/
+    +-- app/
+    +-- components/
+    +-- lib/
+    +-- hooks/
+    +-- package.json
+```
 ├── backend/
 │ ├── app.py
 │ ├── config.py
@@ -222,6 +237,9 @@ soffice --version
 | `PEXELS_API_KEY` | https://www.pexels.com/api/            | Free |
 
 4. Run the frontend:
+   ```bash
+   :
+   ```
 
 ```bash
    pnpm dev -- --host 0.0.0.0
@@ -262,6 +280,21 @@ The frontend stores the returned JWT token and sends it in the `Authorization: B
 - `POST /api/assessment/submit` — Scores the completed test and stores the resulting CEFR level (A1-C2) on the user's profile.
 
 ### Interview Workflows
+* `POST /api/interview/start`
+  * Starts a new interview session and returns AI-generated questions.
+  * Supports multipart form data and optional resume upload.
+* `POST /api/interview/followup`
+  * Generates a follow-up question from the candidate answer.
+* `POST /api/interview/feedback`
+  * Saves interview transcript and returns AI feedback.
+* `GET /api/interview/sessions`
+  * Retrieves a user�s saved session history.
+* `GET /api/interview/stats`
+  * Returns aggregated progress metrics and streak data.
+
+### Legacy Interview / Resume Endpoints
+* `POST /api/interview/generate`
+* `POST /api/interview/upload-resume`
 
 - `POST /api/interview/start` — Starts a new interview session and returns AI-generated questions. Supports multipart form data, an optional resume upload, and an optional `num_questions` field (1-20, default 5) to control how many questions are generated.
 - `POST /api/interview/questions/generate` — Generates a blueprint-backed interview question set from the latest plan and candidate profile.
