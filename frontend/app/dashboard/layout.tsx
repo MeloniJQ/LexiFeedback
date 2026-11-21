@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Sidebar } from '@/components/layout/sidebar'
 import { Header } from '@/components/layout/header'
-import { getToken, getCurrentUser } from '@/lib/auth'
+import { getToken, getCurrentUser, getUser } from '@/lib/auth'
 import { WordOfDayModal } from '@/components/word-of-day-modal'
 
 export default function DashboardLayout({
@@ -20,6 +20,14 @@ export default function DashboardLayout({
     if (!token) {
       router.replace('/login')
       return
+    }
+
+    // PERFORMANCE: if we already know (from the login response saved in
+    // sessionStorage) that this user finished the placement test, show the
+    // dashboard immediately instead of waiting for a network round trip, and
+    // verify in the background. Unknown/unfinished users still wait, as before.
+    if (getUser()?.assessment_completed) {
+      setChecking(false)
     }
 
     // Gate the dashboard on the CEFR placement test (Feature 1) — this
@@ -38,7 +46,7 @@ export default function DashboardLayout({
   }
 
   return (
-    <div className="flex h-screen bg-white dark:bg-[#0F172A]">
+    <div className="flex h-screen app-bg">
       <Sidebar />
       <div className="flex-1 flex flex-col overflow-hidden">
         <Header />

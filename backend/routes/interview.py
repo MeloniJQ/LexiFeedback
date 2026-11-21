@@ -14,6 +14,8 @@ Kept for backward compat:
 """
 
 from flask import Blueprint, request, jsonify
+from sqlalchemy.orm import defer, load_only
+from utils.time import to_iso_utc
 from models import db, PracticeSession, InterviewProgress, User, SavedVocabulary
 from services.ai_service import (
     generate_questions_from_resume,
@@ -375,11 +377,29 @@ def discard_progress(payload, session_key):
 def get_user_sessions(payload):
     try:
         session_type = request.args.get("session_type")
-        query = PracticeSession.query.filter_by(user_id=payload["user_id"])
+        # PERFORMANCE: the raw `transcript` column can be tens of KB per row and
+        # no list screen uses it, so don't load or send it. Without this, 300
+        # sessions was a ~10 MB response. `feedback` is kept: the history table
+        # preview and the "full feedback" modal both read it.
+        query = PracticeSession.query.options(defer(PracticeSession.transcript)).filter_by(
+            user_id=payload["user_id"]
+        )
         if session_type:
             query = query.filter_by(session_type=session_type)
         sessions = query.order_by(PracticeSession.created_at.desc()).all()
-        return jsonify([s.to_dict() for s in sessions]), 200
+        return jsonify([
+            {
+                "id": s.id,
+                "user_id": s.user_id,
+                "session_type": s.session_type,
+                "title": s.title,
+                "feedback": s.feedback,
+                "score": s.score,
+                "duration_seconds": s.duration_seconds,
+                "created_at": to_iso_utc(s.created_at),
+            }
+            for s in sessions
+        ]), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -388,7 +408,23 @@ def get_user_sessions(payload):
 @token_required
 def get_user_stats(payload):
     try:
-        sessions = PracticeSession.query.filter_by(user_id=payload["user_id"]).all()
+        # PERFORMANCE: stats only needs these small columns. Loading the big
+        # transcript/feedback text of every session just to count and average
+        # them was the slowest part of this endpoint.
+        sessions = (
+            PracticeSession.query.options(
+                load_only(
+                    PracticeSession.id,
+                    PracticeSession.session_type,
+                    PracticeSession.title,
+                    PracticeSession.score,
+                    PracticeSession.duration_seconds,
+                    PracticeSession.created_at,
+                )
+            )
+            .filter_by(user_id=payload["user_id"])
+            .all()
+        )
         total_sessions = len(sessions)
 
         # Sum real durations where we have them. Older sessions logged before
@@ -426,10 +462,21 @@ def get_user_stats(payload):
                     else:
                         break
 
-        type_data = {t: {"count": 0, "sum": 0, "n": 0}
-                    for t in ("interview", "presentation", "conversation", "reading")}
+        # "TV News Anchor" is stored as a reading session (mode="journalist")
+        # whose title starts with "TV News Anchor". Report it as its own mode
+        # ("tv_anchor") so it gets its own analytics, separate from standard
+        # Reading practice.
+        def mode_of(s):
+            t = (s.session_type or "").lower()
+            if t == "reading" and "tv news anchor" in (s.title or "").lower():
+                return "tv_anchor"
+            return t
+
+        MODE_KEYS = ("interview", "presentation", "conversation", "reading", "tv_anchor")
+
+        type_data = {t: {"count": 0, "sum": 0, "n": 0} for t in MODE_KEYS}
         for s in sessions:
-            t = s.session_type.lower()
+            t = mode_of(s)
             if t in type_data:
                 type_data[t]["count"] += 1
                 m = re.match(r"(\d+)/10", s.score or "")
@@ -452,12 +499,12 @@ def get_user_stats(payload):
         WINDOW_DAYS = 30
         today = date.today()
         day_list = [today - timedelta(days=i) for i in range(WINDOW_DAYS - 1, -1, -1)]
-        by_day = {d: {"interview": 0, "presentation": 0, "conversation": 0, "reading": 0} for d in day_list}
+        by_day = {d: {k: 0 for k in MODE_KEYS} for d in day_list}
         window_start = today - timedelta(days=WINDOW_DAYS - 1)
         for s in sessions:
             d = s.created_at.date() if s.created_at else None
             if d and d >= window_start and d in by_day:
-                t = s.session_type.lower()
+                t = mode_of(s)
                 if t in by_day[d]:
                     by_day[d][t] += 1
 
@@ -468,6 +515,7 @@ def get_user_stats(payload):
                 "presentation": by_day[d]["presentation"],
                 "conversation": by_day[d]["conversation"],
                 "reading": by_day[d]["reading"],
+                "tv_anchor": by_day[d]["tv_anchor"],
                 "total": sum(by_day[d].values()),
             }
             for d in day_list
@@ -518,6 +566,7 @@ def get_user_stats(payload):
                 skill_entry("Presentation Skills",  "presentation"),
                 skill_entry("Conversation Fluency", "conversation"),
                 skill_entry("Reading Comprehension","reading"),
+                skill_entry("TV News Anchor",       "tv_anchor"),
             ],
             "activity_timeline": activity_timeline,
             "vocabulary": {

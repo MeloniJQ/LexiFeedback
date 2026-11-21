@@ -1,5 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server'
 
+// ─── CEFR wording clause (TS port of backend utils/cefr.py's cefr_language_clause) ──
+// This route runs on the Next.js server and calls Groq directly, so it can't
+// import the Python backend's helper — this is a deliberate duplicate kept
+// in sync by hand. It scales how feedback TEXT is worded to the user's CEFR
+// level without touching the numeric scoring, which stays equally rigorous
+// regardless of level.
+
+const CEFR_LABELS: Record<string, string> = {
+  A1: 'Beginner', A2: 'Elementary', B1: 'Intermediate',
+  B2: 'Upper Intermediate', C1: 'Advanced', C2: 'Proficient',
+}
+
+const CEFR_WORDING_GUIDANCE: Record<string, string> = {
+  A1: 'Use very short sentences and the most common, everyday words. Avoid idioms, phrasal verbs, and multi-clause sentences entirely.',
+  A2: 'Use short, simple sentences and common vocabulary. Avoid idioms and complex grammar.',
+  B1: 'Use clear, moderately simple sentences. Some terminology is fine, but avoid dense jargon strings.',
+  B2: 'Normal professional phrasing is fine — this is close to the default tone.',
+  C1: 'Use natural, fluent professional English, including idiomatic phrasing and nuanced sentences.',
+  C2: 'Use sophisticated, idiomatic, native-level professional English freely.',
+}
+
+function cefrLanguageClause(englishLevel: string | null | undefined, subject = 'feedback comment'): string {
+  if (!englishLevel) return ''
+  const level = englishLevel.toUpperCase()
+  const guidance = CEFR_WORDING_GUIDANCE[level]
+  if (!guidance) return ''
+  return `- USER'S ENGLISH LEVEL: ${level} (${CEFR_LABELS[level] ?? ''}). Word every ${subject} so its LANGUAGE (not its substance) matches this level — ${guidance} Do not simplify the substance of the feedback, only the phrasing.`
+}
 // ─── Types (must match PresentationFeedback in app/practice/presentation/page.tsx) ──
 
 interface WordSuggestion {
@@ -203,7 +231,8 @@ async function synthesizeWithGroq(
   topic: string,
   slideTitle: string,
   slideBullets: string[],
-  local: ReturnType<typeof analyzeLocally>
+  local: ReturnType<typeof analyzeLocally>,
+  englishLevel: string | null | undefined
 ): Promise<GroqFeedbackResponse | null> {
   const apiKey = process.env.GROQ_API_KEY
   if (!apiKey) return null
@@ -257,7 +286,10 @@ STRICT SCORING RUBRIC — apply to contentScore, grammarScore, and vocabularySco
 - 5-6.9: Adequate but flawed — noticeable problems.
 - 3-4.9: Weak — frequent issues in this dimension.
 - 0-2.9: Very weak.
-A transcript under 15 words cannot score above 4.5 in ANY of these three dimensions — there isn't enough material to demonstrate competence.`
+A transcript under 15 words cannot score above 4.5 in ANY of these three dimensions — there isn't enough material to demonstrate competence.
+
+${cefrLanguageClause(englishLevel)}
+(This only affects the WORDING of clarityNotes/strengths/improvements/summary/spokenSummary text — the numeric scores above must stay equally rigorous regardless of level.)`
 
   const models = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant']
   for (const model of models) {
@@ -302,6 +334,7 @@ export async function POST(request: NextRequest) {
       slideNumber = 1,
       currentSlide = {},
       durationSec = null,
+      englishLevel = null,
     } = await request.json()
 
     if (!transcript || transcript.trim().length === 0) {
@@ -314,7 +347,8 @@ export async function POST(request: NextRequest) {
       topic,
       currentSlide?.title ?? `Slide ${slideNumber}`,
       currentSlide?.bullets ?? [],
-      local
+      local,
+      englishLevel
     )
 
     const vocabularySuggestions: WordSuggestion[] = [

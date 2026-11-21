@@ -6,7 +6,7 @@ class PracticeSession(db.Model):
     __tablename__ = 'practice_sessions'
     
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
     session_type = db.Column(db.String(50), nullable=False)  # 'interview', 'presentation', 'conversation', 'reading'
     title = db.Column(db.String(255), nullable=True)
     transcript = db.Column(db.Text, nullable=True)

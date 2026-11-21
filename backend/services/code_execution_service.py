@@ -216,8 +216,10 @@ def analyze_code_submission(
     company: str,
     role: str,
     test_execution: dict,
+    english_level: str | None = None,
 ) -> dict:
     from llm.provider_factory import get_provider  # local import avoids a circular import at module load
+    from utils.cefr import cefr_language_clause
 
     total = test_execution.get("total_count", 0)
     passed = test_execution.get("passed_count", 0)
@@ -244,6 +246,8 @@ Tests passed: {passed}/{total}
 Comment ONLY on code quality aspects (NOT correctness — that's already determined above):
 readability, naming, structure, time/space complexity, edge-case handling, and idiomatic style
 for this language.
+
+{cefr_language_clause(english_level, subject="feedback comment")}
 
 Return ONLY this JSON:
 {{

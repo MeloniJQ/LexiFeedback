@@ -39,6 +39,7 @@ def generate_questions_from_blueprint(
     mode: str | None = None,
     round_type: str | None = None,
     wants_coding: bool = False,
+    english_level: str | None = None,
 ) -> list[dict[str, Any]]:
     role = blueprint.get("role") or ""
     company = blueprint.get("company") or ""
@@ -57,6 +58,7 @@ def generate_questions_from_blueprint(
         company=company,
         role=role,
         include_coding=include_coding,
+        english_level=english_level,
     )
 
     try:
